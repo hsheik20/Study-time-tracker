@@ -1,0 +1,18 @@
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Focus Tracker session data (if FOCUS_TRACKER_DATA points inside the repo)
+.focus_tracker/
+sessions.json
+*.tmp
+
+# OS / editor files
+.DS_Store
+.vscode/
+.idea/

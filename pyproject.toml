@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "focus-tracker"
+version = "0.1.0"
+description = "A command-line tool for tracking time spent focusing on different activities."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+focus = "focus_tracker.cli:main"
+
+[tool.setuptools]
+packages = ["focus_tracker"]
