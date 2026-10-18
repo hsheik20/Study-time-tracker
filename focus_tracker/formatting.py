@@ -6,7 +6,6 @@ import math
 import re
 from datetime import timedelta
 
-from focus_tracker.models import Session
 
 _DURATION_RE = re.compile(r"^(?:(\d+)h)?\s*(?:(\d+)m)?$")
 
@@ -45,20 +44,6 @@ def format_clock(delta: timedelta, round_up: bool = False) -> str:
 
 
 TIME_FMT = "%Y-%m-%d %H:%M"
-
-
-def session_table(sessions: list[Session]) -> list[str]:
-    width = max([len("Activity"), *(len(s.activity) for s in sessions)])
-    lines = [f"{'ID':>4}  {'Started':<16}  {'Activity':<{width}}  {'Duration':>9}  Note"]
-    for s in sessions:
-        duration = format_duration(s.duration()) + ("*" if s.active else "")
-        lines.append(
-            f"{s.id:>4}  {s.start:{TIME_FMT}}  {s.activity:<{width}}  {duration:>9}  {s.note}"
-            .rstrip()
-        )
-    if any(s.active for s in sessions):
-        lines.append("* still running")
-    return lines
 
 
 def summary_lines(totals: dict[str, timedelta]) -> list[str]:

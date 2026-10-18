@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from datetime import datetime
 
@@ -12,9 +13,9 @@ from focus_tracker.formatting import (
     format_clock,
     format_duration,
     parse_duration,
-    session_table,
     summary_lines,
 )
+from focus_tracker.history_view import history_screen
 from focus_tracker.menu import Menu
 from focus_tracker.storage import Storage
 from focus_tracker.tracker import PERIODS, Tracker, TrackerError
@@ -138,7 +139,11 @@ def cmd_log(tracker: Tracker, args) -> int:
     if not sessions:
         print("No sessions recorded yet.")
         return 0
-    print("\n".join(session_table(sessions)))
+    title = args.activity or ("All sessions" if not args.limit else "Recent sessions")
+    width = shutil.get_terminal_size().columns - 1
+    total = len(tracker.history(args.activity))
+    lines = history_screen(sessions, title, datetime.now(), width, total)
+    print("\n".join(text for _, text in lines))
     return 0
 
 

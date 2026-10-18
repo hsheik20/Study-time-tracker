@@ -3,7 +3,8 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from focus_tracker.menu import BANNER, Menu
+from focus_tracker.display import banner_text
+from focus_tracker.menu import BANNER, ENCOURAGEMENTS, Menu
 from focus_tracker.storage import Storage
 from focus_tracker.tracker import Tracker
 
@@ -17,22 +18,30 @@ class MenuTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_menu(self, *inputs: str) -> str:
+    def run_menu(self, *inputs: str, clock=None) -> str:
         """Run the menu with scripted answers; running out of answers acts like Ctrl+D."""
         answers = iter(inputs)
         output: list[str] = []
+        self.chimes = 0
 
         def fake_input(prompt: str) -> str:
             output.append(prompt)
+            if clock and prompt == "> ":
+                clock.tick()  # time passes while the timer waits for a key
             try:
                 return next(answers)
             except StopIteration:
                 raise EOFError from None
 
+        def fake_chime() -> None:
+            self.chimes += 1
+
         def fake_print(*args, end="\n", flush=False) -> None:
             output.append(" ".join(str(a) for a in args) + ("" if end == "\n" else end))
 
-        self.assertEqual(Menu(self.tracker, fake_input, fake_print).run(), 0)
+        menu = Menu(self.tracker, fake_input, fake_print, clock=clock or datetime.now,
+                    chime=fake_chime)
+        self.assertEqual(menu.run(), 0)
         return "\n".join(output)
 
     def reload(self) -> Tracker:
@@ -149,6 +158,52 @@ class TestFocusSession(MenuTestCase):
         self.assertIn("still running", self.run_menu("5"))
 
 
+class SteppingClock:
+    """Jumps forward a fixed step each time the timer waits for a key."""
+
+    def __init__(self, step: timedelta):
+        self.now = datetime.now()
+        self.step = step
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def tick(self) -> None:
+        self.now += self.step
+
+
+class TestCompletion(MenuTestCase):
+    def test_finishing_plays_chime_then_celebrates(self):
+        # A 1-minute session; 61 seconds pass while waiting at the timer prompt.
+        clock = SteppingClock(timedelta(seconds=61))
+        out = self.run_menu("1", "study", "1", "", "z", "5", clock=clock)
+        self.assertEqual(self.chimes, 1)
+        self.assertIn("✓  SESSION COMPLETE", out)
+        for row in banner_text("WELL DONE!"):
+            self.assertIn(row.rstrip(), out)
+        self.assertIn("You focused on study for 1m.", out)
+        self.assertTrue(any(line in out for line in ENCOURAGEMENTS))
+        self.assertIn("Today: 1m of focus across 1 session.", out)
+        self.assertEqual(self.reload().sessions[0].duration(), timedelta(minutes=1))
+
+    def test_ending_early_has_no_chime_or_celebration(self):
+        out = self.run_menu("1", "study", "", "", "e", "y", "5")
+        self.assertEqual(self.chimes, 0)
+        self.assertNotIn("SESSION COMPLETE", out)
+        self.assertIn("Session ended early.", out)
+
+    def test_cancelling_has_no_chime(self):
+        out = self.run_menu("1", "study", "", "", "c", "y", "5")
+        self.assertEqual(self.chimes, 0)
+        self.assertNotIn("SESSION COMPLETE", out)
+
+    def test_finished_while_away_has_no_chime(self):
+        self.tracker.start("work", now=datetime.now() - timedelta(hours=1),
+                           target=timedelta(minutes=10))
+        self.run_menu("5")
+        self.assertEqual(self.chimes, 0)
+
+
 class TestHistory(MenuTestCase):
     def setUp(self):
         super().setUp()
@@ -165,6 +220,18 @@ class TestHistory(MenuTestCase):
         table = out.split("Which activity?")[1]
         self.assertIn("work", table)
         self.assertNotIn("essay", table)
+
+    def test_history_screen_layout(self):
+        out = self.run_menu("2", "1", "", "5", "5")
+        self.assertIn("SESSION HISTORY  ·  Recent sessions", out)
+        self.assertIn("TODAY ·", out)
+        self.assertIn("· Untimed", out)
+        self.assertIn("2 sessions  ·  1h 40m focused", out)
+
+    def test_activity_history_title(self):
+        out = self.run_menu("2", "3", "2", "", "5", "5")
+        self.assertIn("SESSION HISTORY  ·  work", out)
+        self.assertIn("1 session  ·  1h 00m focused", out)
 
     def test_delete_session(self):
         self.run_menu("2", "4", "x", "1", "y", "5", "5")

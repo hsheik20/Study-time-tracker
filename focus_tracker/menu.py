@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import random
+import shutil
 import sys
 from datetime import datetime, timedelta
 from typing import Callable
@@ -10,15 +13,24 @@ from focus_tracker.formatting import (
     TIME_FMT,
     format_duration,
     parse_duration,
-    session_table,
     summary_lines,
 )
+from focus_tracker.display import FRAME_WIDTH, Line, celebration, paint
+from focus_tracker.history_view import history_screen
+from focus_tracker.sound import play_chime
 from focus_tracker.timer import FocusTimer, LineKeys, TimerResult, terminal_keys
 from focus_tracker.tracker import Tracker, TrackerError
 
 BANNER = "========== FOCUS TRACKER =========="
 DEFAULT_FOCUS = timedelta(minutes=25)
 MAX_FOCUS = timedelta(hours=12)
+ENCOURAGEMENTS = [
+    "Great work. Keep it going!",
+    "Well done. Keep the momentum going!",
+    "Another session in the books. Keep it up!",
+    "You showed up and did the work. Be proud of that!",
+    "Nice focus! Every session adds up.",
+]
 PERIOD_LABELS = {"today": "Today", "week": "This Week", "month": "This Month", "all": "All Time"}
 
 Action = Callable[[], None]
@@ -32,6 +44,7 @@ class Menu:
         print_fn: Callable[..., None] | None = None,
         live_timer: bool | None = None,
         clock: Callable[[], datetime] = datetime.now,
+        chime: Callable[[], None] = play_chime,
     ):
         """`live_timer` enables the single-keypress countdown; by default it's on
         when using the real terminal, and off when input is scripted or piped."""
@@ -41,7 +54,9 @@ class Menu:
         if live_timer is None:
             live_timer = input_fn is None and sys.stdin.isatty() and sys.stdout.isatty()
         self.live_timer = live_timer
+        self.color = live_timer and "NO_COLOR" not in os.environ
         self.clock = clock
+        self.chime = chime
 
     def run(self) -> int:
         actions: list[tuple[str, Action | None]] = [
@@ -222,7 +237,8 @@ class Menu:
                 self.print(text, end="")
             keys = LineKeys(self.input)
         with keys:
-            result = FocusTimer(self.tracker, keys, write, self.live_timer, self.clock).run()
+            result = FocusTimer(self.tracker, keys, write, self.live_timer, self.clock,
+                                color=self.color).run()
         self.report_result(result)
 
     def report_result(self, result: TimerResult) -> None:
@@ -230,10 +246,22 @@ class Menu:
             self.print("Session discarded.")
             return
         if result.outcome == "completed":
-            self.print("Time's up! Session complete.")
-        elif result.session.target:
+            # Only a session that ran its full length earns the chime.
+            self.chime()
+            self.celebrate(result.session)
+            return
+        if result.session.target:
             self.print("Session ended early.")
         self.report_saved(result.session)
+
+    def celebrate(self, session) -> None:
+        stats = self.tracker.stats("today", now=self.clock())
+        count = f"{stats.count} session{'s' if stats.count != 1 else ''}"
+        today = f"Today: {format_duration(stats.total)} of focus across {count}."
+        width = min(FRAME_WIDTH, shutil.get_terminal_size().columns - 1)
+        lines = celebration(session.activity, format_duration(session.duration()),
+                            random.choice(ENCOURAGEMENTS), today, width)
+        self.show_lines(lines)
 
     def report_if_completed_while_away(self) -> bool:
         """Save a timed session whose countdown ran out while the app was closed."""
@@ -253,33 +281,38 @@ class Menu:
 
     def history_menu(self) -> None:
         self.submenu("Session History", [
-            ("Recent Sessions", lambda: self.show_sessions(self.tracker.history(limit=10))),
-            ("All Sessions", lambda: self.show_sessions(self.tracker.history())),
+            ("Recent Sessions", lambda: self.show_sessions(
+                self.tracker.history(limit=10), "Recent sessions", len(self.tracker.sessions))),
+            ("All Sessions", lambda: self.show_sessions(self.tracker.history(), "All sessions")),
             ("Sessions for an Activity", self.show_activity_sessions),
             ("Delete a Session", self.delete_session),
         ])
 
-    def show_sessions(self, sessions) -> None:
+    def show_lines(self, lines: list[Line]) -> None:
+        for style, text in lines:
+            self.print(paint(style, text) if self.color else text)
+
+    def show_history(self, sessions, title: str, total: int | None = None) -> None:
+        """`total` is how many sessions exist when only the latest few are shown."""
+        width = shutil.get_terminal_size().columns - 1
         self.print()
-        if not sessions:
-            self.print("No sessions to show.")
-        for line in session_table(sessions) if sessions else []:
-            self.print(line)
+        self.show_lines(history_screen(sessions, title, self.clock(), width, total))
+
+    def show_sessions(self, sessions, title: str, total: int | None = None) -> None:
+        self.show_history(sessions, title, total)
         self.pause()
 
     def show_activity_sessions(self) -> None:
         activity = self.pick_activity("Which activity?")
         if activity:
-            self.show_sessions(self.tracker.history(activity))
+            self.show_sessions(self.tracker.history(activity), activity)
 
     def delete_session(self) -> None:
         recent = self.tracker.history(limit=10)
         if not recent:
             self.print("\nNo sessions to delete.")
             return
-        self.print("\nMost recent sessions:")
-        for line in session_table(recent):
-            self.print(line)
+        self.show_history(recent, "Choose a session to delete", len(self.tracker.sessions))
         self.print()
         session_id = self.ask_session_id()
         if session_id is None:

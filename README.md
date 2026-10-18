@@ -38,8 +38,28 @@ Select an option:
   minutes (default 25, or whatever you used last), and a live countdown starts:
 
   ```
-  FOCUS   18:42 remaining  █████░░░░░░░░░░░░░░░  25%
+  ╭──────────────────────────────────────────────────────────────╮
+  │ FOCUS SESSION  ·  CSE 373 homework                  ● ACTIVE │
+  ╰──────────────────────────────────────────────────────────────╯
+
+                   ██  ██ ██████    ██████ ██████
+                   ██  ██ ██  ██ ██ ██  ██ ██  ██
+                   ██████ ██  ██    ██  ██ ██  ██
+                       ██ ██  ██ ██ ██  ██ ██  ██
+                       ██ ██████    ██████ ██████
+                          remaining of 50m
+
+      ·········o=o>········································|▚▞
+      ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   20%
+
+  ────────────────────────────────────────────────────────────────
+             [P] Pause     [E] End early     [C] Cancel
   ```
+
+  The car drives toward the finish line as you make progress, and stays put
+  while the session is paused. In a short terminal panel the clock switches to
+  normal-size digits, and in a very small one the screen collapses to a single
+  status line. Set `NO_COLOR=1` to turn colors off.
 
   | Key | Action |
   |---|---|
@@ -48,15 +68,20 @@ Select an option:
   | `C` | cancel and discard the session (asks y/n) |
   | Ctrl+C | end immediately and save |
 
-  When the countdown reaches zero the session is saved automatically and the
-  terminal bell rings. Pauses are saved as they happen, so if you close the app
+  When the countdown reaches zero the session is saved automatically, a short
+  chime plays, and a big "WELL DONE!" message celebrates the finished session.
+  Ending early or cancelling doesn't chime. The chime uses your system's audio
+  player (afplay on macOS, winsound on Windows, paplay/pw-play/aplay on Linux)
+  and falls back to the terminal bell; set `FOCUS_TRACKER_SOUND=off` to mute it. Pauses are saved as they happen, so if you close the app
   mid-session nothing is lost: choose "Start Focus Session" again to continue,
   and a session whose time ran out while the app was closed is saved for you.
 
   The single-key controls need a real terminal (VS Code's integrated terminal
   works). If input is piped, type the letter and press Enter instead.
 - **View Session History**: recent sessions, all sessions, one activity's sessions,
-  or delete a session.
+  or delete a session. Sessions are grouped by day with a daily total, and each
+  one shows its time range, focused time and status: ✓ Completed, ■ Ended at 70%
+  (ended early), ● Running, ‖ Paused, or · Untimed (logged manually or open-ended).
 - **View Statistics**: totals per activity, session count, average and longest
   session, and your daily streak, for today, this week, this month or all time.
 - **Manage Activities**: view, add, rename or delete activities, and log a
@@ -106,6 +131,9 @@ python3 -m unittest discover -s tests -v
 
 - `focus_tracker/menu.py`: interactive menu
 - `focus_tracker/timer.py`: live countdown and keypress handling
+- `focus_tracker/display.py`: drawing the session screen (big digits, track, bar)
+- `focus_tracker/sound.py`: the generated completion chime
+- `focus_tracker/history_view.py`: the session history screen
 - `focus_tracker/cli.py`: argument parsing and one-off commands
 - `focus_tracker/tracker.py`: sessions, activities, summaries and statistics
 - `focus_tracker/storage.py`: JSON persistence (atomic writes)
