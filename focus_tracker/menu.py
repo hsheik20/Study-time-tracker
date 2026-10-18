@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta
 from typing import Callable
 
@@ -12,9 +13,12 @@ from focus_tracker.formatting import (
     session_table,
     summary_lines,
 )
+from focus_tracker.timer import FocusTimer, LineKeys, TimerResult, terminal_keys
 from focus_tracker.tracker import Tracker, TrackerError
 
 BANNER = "========== FOCUS TRACKER =========="
+DEFAULT_FOCUS = timedelta(minutes=25)
+MAX_FOCUS = timedelta(hours=12)
 PERIOD_LABELS = {"today": "Today", "week": "This Week", "month": "This Month", "all": "All Time"}
 
 Action = Callable[[], None]
@@ -26,10 +30,18 @@ class Menu:
         tracker: Tracker,
         input_fn: Callable[[str], str] | None = None,
         print_fn: Callable[..., None] | None = None,
+        live_timer: bool | None = None,
+        clock: Callable[[], datetime] = datetime.now,
     ):
+        """`live_timer` enables the single-keypress countdown; by default it's on
+        when using the real terminal, and off when input is scripted or piped."""
         self.tracker = tracker
         self.input = input_fn or input
         self.print = print_fn or print
+        if live_timer is None:
+            live_timer = input_fn is None and sys.stdin.isatty() and sys.stdout.isatty()
+        self.live_timer = live_timer
+        self.clock = clock
 
     def run(self) -> int:
         actions: list[tuple[str, Action | None]] = [
@@ -40,6 +52,7 @@ class Menu:
             ("Exit", None),
         ]
         try:
+            self.report_if_completed_while_away()
             while True:
                 self.print(f"\n{BANNER}\n")
                 action = actions[self.choose([label for label, _ in actions])][1]
@@ -110,6 +123,24 @@ class Menu:
             except ValueError as e:
                 self.print(e)
 
+    def ask_focus_length(self) -> timedelta:
+        default = self.tracker.last_target() or DEFAULT_FOCUS
+        while True:
+            raw = self.input(
+                f"Focus duration in minutes (press Enter for {format_duration(default)}): "
+            ).strip()
+            if not raw:
+                return default
+            try:
+                length = parse_duration(raw)
+            except ValueError:
+                self.print(f"'{raw}' isn't a valid duration. Enter minutes like 25, or 1h30m.")
+                continue
+            if not timedelta() < length <= MAX_FOCUS:
+                self.print(f"Please choose between 1 minute and {format_duration(MAX_FOCUS)}.")
+                continue
+            return length
+
     def ask_end_time(self) -> datetime | None:
         while True:
             raw = self.input("When did it end? YYYY-MM-DD HH:MM (press Enter for now): ").strip()
@@ -148,17 +179,20 @@ class Menu:
     # --- 1. Focus sessions ------------------------------------------------
 
     def start_session(self) -> None:
+        if self.report_if_completed_while_away():
+            return
         current = self.tracker.active_session()
         if current:
+            state = "paused" if current.paused else "running"
             self.print(
-                f"\nA '{current.activity}' session has been running since "
-                f"{current.start:%a %H:%M} ({format_duration(current.duration())}).\n"
+                f"\nYour '{current.activity}' session from {current.start:%a %H:%M} is "
+                f"{state} ({format_duration(current.duration())} focused so far).\n"
             )
             choice = self.choose(
-                ["Continue this session", "Stop and save it", "Discard it", "Back to Main Menu"]
+                ["Continue this session", "End and save it", "Discard it", "Back to Main Menu"]
             )
             if choice == 0:
-                self.focus_screen()
+                self.run_timer()
             elif choice == 1:
                 self.report_saved(self.tracker.stop())
             elif choice == 2 and self.confirm("Discard this session?"):
@@ -169,33 +203,48 @@ class Menu:
         activity = self.pick_activity("What are you focusing on?", allow_new=True)
         if activity is None:
             return
+        length = self.ask_focus_length()
         note = self.input("Note (optional, press Enter to skip): ").strip()
-        self.tracker.start(activity, note)
-        self.focus_screen()
+        self.tracker.start(activity, note, now=self.clock(), target=length)
+        self.run_timer()
 
-    def focus_screen(self) -> None:
+    def run_timer(self) -> None:
         session = self.tracker.active_session()
-        self.print(f"\nFocusing on '{session.activity}' since {session.start:%H:%M}. Good luck!")
-        self.print("Press Enter to stop and save, or type C then Enter to cancel.")
-        while True:
-            try:
-                raw = self.input("> ").strip().lower()
-            except KeyboardInterrupt:
-                raw = ""  # Ctrl+C ends the session the same way Enter does.
-            if raw == "":
-                self.report_saved(self.tracker.stop())
-                return
-            if raw in ("c", "cancel"):
-                if self.confirm("Discard this session? It won't be saved."):
-                    self.tracker.cancel()
-                    self.print("Session discarded.")
-                    return
-                self.print("Still focusing. Press Enter when you're done.")
-                continue
-            self.print("Press Enter to stop the session, or type C to cancel it.")
+        length = f"{format_duration(session.target)} " if session.target else ""
+        self.print(f"\nStarting a {length}focus session on '{session.activity}'. Good luck!")
+        if self.live_timer:
+            def write(text: str) -> None:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+            keys = terminal_keys()
+        else:
+            def write(text: str) -> None:
+                self.print(text, end="")
+            keys = LineKeys(self.input)
+        with keys:
+            result = FocusTimer(self.tracker, keys, write, self.live_timer, self.clock).run()
+        self.report_result(result)
+
+    def report_result(self, result: TimerResult) -> None:
+        if result.outcome == "cancelled":
+            self.print("Session discarded.")
+            return
+        if result.outcome == "completed":
+            self.print("Time's up! Session complete.")
+        elif result.session.target:
+            self.print("Session ended early.")
+        self.report_saved(result.session)
+
+    def report_if_completed_while_away(self) -> bool:
+        """Save a timed session whose countdown ran out while the app was closed."""
+        session = self.tracker.complete_if_due(self.clock())
+        if session:
+            self.print(f"\nYour {format_duration(session.target)} '{session.activity}' "
+                       "session finished while you were away and has been saved.")
+        return session is not None
 
     def report_saved(self, session) -> None:
-        today = self.tracker.summary("today").get(session.activity)
+        today = self.tracker.summary("today", now=self.clock()).get(session.activity)
         self.print(f"\nSaved {format_duration(session.duration())} of '{session.activity}'.")
         if today:
             self.print(f"Today's total for '{session.activity}': {format_duration(today)}.")

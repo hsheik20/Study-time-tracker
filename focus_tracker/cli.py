@@ -9,6 +9,7 @@ from datetime import datetime
 from focus_tracker import __version__
 from focus_tracker.formatting import (
     TIME_FMT,
+    format_clock,
     format_duration,
     parse_duration,
     session_table,
@@ -30,9 +31,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("start", help="start a focus session")
     p.add_argument("activity", help="what you're focusing on, e.g. studying")
+    p.add_argument("-m", "--minutes", help="session length (e.g. 25 or 1h30m); "
+                   "the session saves itself when time is up. Omit for an open-ended session")
     p.add_argument("-n", "--note", default="", help="optional note")
 
-    sub.add_parser("stop", help="stop the current session")
+    sub.add_parser("pause", help="pause the current session")
+    sub.add_parser("resume", help="resume a paused session")
+    sub.add_parser("stop", help="stop the current session, saving the time focused")
     sub.add_parser("cancel", help="discard the current session without saving it")
     sub.add_parser("status", help="show the current session")
 
@@ -65,6 +70,10 @@ def main(argv: list[str] | None = None, storage: Storage | None = None) -> int:
         tracker = Tracker(storage or Storage())
         if args is None:
             return Menu(tracker).run()
+        done = tracker.complete_if_due()
+        if done:
+            print(f"Your {format_duration(done.target)} '{done.activity}' session "
+                  "finished and has been saved.")
         return COMMANDS[args.command](tracker, args)
     except (TrackerError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -72,8 +81,23 @@ def main(argv: list[str] | None = None, storage: Storage | None = None) -> int:
 
 
 def cmd_start(tracker: Tracker, args) -> int:
-    s = tracker.start(args.activity, args.note)
-    print(f"Started '{s.activity}' at {s.start:%H:%M}. Run 'focus stop' when you're done.")
+    target = parse_duration(args.minutes) if args.minutes else None
+    s = tracker.start(args.activity, args.note, target=target)
+    length = f" for {format_duration(target)}" if target else ""
+    print(f"Started '{s.activity}'{length} at {s.start:%H:%M}. "
+          "Run 'focus stop' to end early, or 'focus' for the live timer.")
+    return 0
+
+
+def cmd_pause(tracker: Tracker, args) -> int:
+    s = tracker.pause()
+    print(f"Paused '{s.activity}' at {format_duration(s.duration())}. Run 'focus resume' to continue.")
+    return 0
+
+
+def cmd_resume(tracker: Tracker, args) -> int:
+    s = tracker.resume()
+    print(f"Resumed '{s.activity}'.")
     return 0
 
 
@@ -93,11 +117,12 @@ def cmd_status(tracker: Tracker, args) -> int:
     s = tracker.active_session()
     if not s:
         print("Not tracking anything. Start with: focus start <activity>")
-    else:
-        print(
-            f"Focusing on '{s.activity}' since {s.start:%H:%M} "
-            f"({format_duration(s.duration())} so far)."
-        )
+        return 0
+    state = "Paused on" if s.paused else "Focusing on"
+    line = f"{state} '{s.activity}' since {s.start:%H:%M}: {format_duration(s.duration())} focused"
+    if s.target:
+        line += f", {format_clock(s.remaining(), round_up=True)} remaining"
+    print(line + ".")
     return 0
 
 
@@ -137,6 +162,8 @@ def cmd_delete(tracker: Tracker, args) -> int:
 
 COMMANDS = {
     "start": cmd_start,
+    "pause": cmd_pause,
+    "resume": cmd_resume,
     "stop": cmd_stop,
     "cancel": cmd_cancel,
     "status": cmd_status,

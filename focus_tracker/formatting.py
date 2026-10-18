@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import timedelta
 
@@ -29,8 +30,18 @@ def format_duration(delta: timedelta) -> str:
     if hours:
         return f"{hours}h {minutes:02d}m"
     if minutes:
-        return f"{minutes}m {seconds:02d}s" if minutes < 10 else f"{minutes}m"
+        return f"{minutes}m {seconds:02d}s" if minutes < 10 and seconds else f"{minutes}m"
     return f"{seconds}s"
+
+
+def format_clock(delta: timedelta, round_up: bool = False) -> str:
+    """Timer-style display: '04:05' or '1:02:03'. Countdowns round up, so the
+    display reads 25:00 at the start and 00:01 in the final second."""
+    seconds = max(0.0, delta.total_seconds())
+    total = math.ceil(seconds) if round_up else int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
 
 
 TIME_FMT = "%Y-%m-%d %H:%M"

@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from focus_tracker.formatting import format_duration, parse_duration
+from focus_tracker.formatting import format_clock, format_duration, parse_duration
 from focus_tracker.storage import Storage
 from focus_tracker.tracker import Tracker, TrackerError
 
@@ -173,6 +173,82 @@ class TestStats(TrackerTestCase):
         self.assertEqual(self.tracker.streak(datetime(2026, 10, 17, 9, 0)), 0)
 
 
+class TestTimedSessions(TrackerTestCase):
+    T0 = datetime(2026, 10, 15, 9, 0)
+
+    def at(self, minutes: float) -> datetime:
+        return self.T0 + timedelta(minutes=minutes)
+
+    def test_pauses_are_excluded_and_persisted(self):
+        self.tracker.start("study", now=self.T0, target=timedelta(minutes=25))
+        self.tracker.pause(now=self.at(10))
+        tracker = self.reload()
+        session = tracker.active_session()
+        self.assertTrue(session.paused)
+        # Progress is frozen while paused, even across a restart.
+        self.assertEqual(session.duration(self.at(30)), timedelta(minutes=10))
+        self.assertEqual(session.remaining(self.at(30)), timedelta(minutes=15))
+        tracker.resume(now=self.at(30))
+        tracker.stop(now=self.at(35))
+        self.assertEqual(self.reload().sessions[0].duration(), timedelta(minutes=15))
+
+    def test_stop_while_paused_closes_the_pause(self):
+        self.tracker.start("study", now=self.T0)
+        self.tracker.pause(now=self.at(5))
+        session = self.tracker.stop(now=self.at(20))
+        self.assertFalse(session.paused)
+        self.assertEqual(session.duration(), timedelta(minutes=5))
+
+    def test_pause_errors(self):
+        with self.assertRaises(TrackerError):
+            self.tracker.pause()
+        self.tracker.start("study")
+        with self.assertRaises(TrackerError):
+            self.tracker.resume()
+        self.tracker.pause()
+        with self.assertRaises(TrackerError):
+            self.tracker.pause()
+
+    def test_invalid_target_rejected(self):
+        with self.assertRaises(TrackerError):
+            self.tracker.start("study", target=timedelta(0))
+
+    def test_complete_if_due_uses_exact_end_time(self):
+        self.tracker.start("study", now=self.T0, target=timedelta(minutes=25))
+        self.tracker.pause(now=self.at(5))
+        self.tracker.resume(now=self.at(15))
+        self.assertIsNone(self.tracker.complete_if_due(now=self.at(30)))
+        session = self.tracker.complete_if_due(now=self.at(90))  # checked long after
+        self.assertEqual(session.end, self.at(35))
+        self.assertEqual(self.reload().sessions[0].duration(), timedelta(minutes=25))
+
+    def test_complete_if_due_ignores_paused_and_untimed(self):
+        self.tracker.start("study", now=self.T0)
+        self.assertIsNone(self.tracker.complete_if_due(now=self.at(600)))
+        self.tracker.stop(now=self.at(1))
+        self.tracker.start("study", now=self.at(2), target=timedelta(minutes=1))
+        self.tracker.pause(now=self.at(2.5))
+        self.assertIsNone(self.tracker.complete_if_due(now=self.at(600)))
+
+    def test_summary_excludes_paused_time_and_clips(self):
+        # 23:30 -> 00:30 with a 23:50-00:10 pause: 10m of focus falls on each day.
+        start = datetime(2026, 10, 14, 23, 30)
+        self.tracker.start("study", now=start)
+        self.tracker.pause(now=start + timedelta(minutes=20))
+        self.tracker.resume(now=start + timedelta(minutes=40))
+        self.tracker.stop(now=start + timedelta(minutes=60))
+        now = datetime(2026, 10, 15, 12, 0)
+        self.assertEqual(self.tracker.summary("today", now=now)["study"], timedelta(minutes=20))
+        self.assertEqual(self.tracker.summary("all", now=now)["study"], timedelta(minutes=40))
+
+    def test_last_target(self):
+        self.assertIsNone(self.tracker.last_target())
+        self.tracker.start("a", now=self.T0, target=timedelta(minutes=50))
+        self.tracker.stop(now=self.at(1))
+        self.tracker.add("b", timedelta(minutes=5))  # untimed, ignored
+        self.assertEqual(self.tracker.last_target(), timedelta(minutes=50))
+
+
 class TestFormatting(unittest.TestCase):
     def test_parse_duration(self):
         cases = {
@@ -194,7 +270,15 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(format_duration(timedelta(seconds=42)), "42s")
         self.assertEqual(format_duration(timedelta(minutes=5, seconds=3)), "5m 03s")
         self.assertEqual(format_duration(timedelta(minutes=45)), "45m")
+        self.assertEqual(format_duration(timedelta(minutes=1)), "1m")
         self.assertEqual(format_duration(timedelta(hours=2, minutes=5)), "2h 05m")
+
+    def test_format_clock(self):
+        self.assertEqual(format_clock(timedelta(minutes=25)), "25:00")
+        self.assertEqual(format_clock(timedelta(seconds=59.2), round_up=True), "01:00")
+        self.assertEqual(format_clock(timedelta(seconds=59.8)), "00:59")
+        self.assertEqual(format_clock(timedelta(hours=1, seconds=3)), "1:00:03")
+        self.assertEqual(format_clock(timedelta(seconds=-5)), "00:00")
 
 
 if __name__ == "__main__":

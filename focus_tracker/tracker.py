@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterator
 
-from focus_tracker.models import Session
+from focus_tracker.models import Pause, Session
 from focus_tracker.storage import Storage
 
 
@@ -139,30 +139,85 @@ class Tracker:
                 return s
         raise TrackerError(f"No session with id {session_id}.")
 
-    def start(self, activity: str, note: str = "", now: datetime | None = None) -> Session:
+    def _require_active(self) -> Session:
+        current = self.active_session()
+        if not current:
+            raise TrackerError("No session is currently running.")
+        return current
+
+    def start(
+        self,
+        activity: str,
+        note: str = "",
+        now: datetime | None = None,
+        target: timedelta | None = None,
+    ) -> Session:
+        """Start a session; with a target it becomes a countdown of that length."""
         current = self.active_session()
         if current:
             raise TrackerError(
                 f"Already tracking '{current.activity}'. Stop that session first."
             )
+        if target is not None and target <= timedelta(0):
+            raise TrackerError("Focus duration must be positive.")
         activity = self._register(activity)
-        session = Session(self._next_id(), activity, now or datetime.now(), note=note)
+        session = Session(self._next_id(), activity, now or datetime.now(), note=note,
+                          target=target)
         self.sessions.append(session)
         self._save()
         return session
 
-    def stop(self, now: datetime | None = None) -> Session:
-        current = self.active_session()
-        if not current:
-            raise TrackerError("No session is currently running.")
-        current.end = now or datetime.now()
+    def pause(self, now: datetime | None = None) -> Session:
+        current = self._require_active()
+        if current.paused:
+            raise TrackerError("The session is already paused.")
+        current.pauses.append(Pause(now or datetime.now()))
         self._save()
         return current
 
-    def cancel(self) -> Session:
+    def resume(self, now: datetime | None = None) -> Session:
+        current = self._require_active()
+        if not current.paused:
+            raise TrackerError("The session isn't paused.")
+        current.pauses[-1].end = now or datetime.now()
+        self._save()
+        return current
+
+    def stop(self, now: datetime | None = None) -> Session:
+        """End the running session, recording the time actually focused so far."""
+        current = self._require_active()
+        now = now or datetime.now()
+        if current.paused:
+            current.pauses[-1].end = now
+        current.end = now
+        self._save()
+        return current
+
+    def complete_if_due(self, now: datetime | None = None) -> Session | None:
+        """Save a timed session whose countdown has run out.
+
+        The end time is set to the moment the countdown hit zero, so the recorded
+        duration equals the target even if this is called late (e.g. after the
+        app was closed mid-session).
+        """
         current = self.active_session()
-        if not current:
-            raise TrackerError("No session is currently running.")
+        if not current or current.target is None or current.paused:
+            return None
+        now = now or datetime.now()
+        remaining = current.remaining(now)
+        if remaining > timedelta():
+            return None
+        current.end = now + remaining
+        self._save()
+        return current
+
+    def last_target(self) -> timedelta | None:
+        """The planned length of the most recent timed session, if any."""
+        timed = [s for s in self.sessions if s.target]
+        return max(timed, key=lambda s: s.start).target if timed else None
+
+    def cancel(self) -> Session:
+        current = self._require_active()
         self.sessions.remove(current)
         self._save()
         return current
@@ -197,13 +252,12 @@ class Tracker:
     # --- Reporting --------------------------------------------------------
 
     def _clipped(self, period: str, now: datetime) -> Iterator[tuple[Session, timedelta]]:
-        """Yield each session with the part of its duration that falls inside the period."""
+        """Yield each session with the focused time that falls inside the period."""
         since = period_start(period, now)
         for s in self.sessions:
-            start = max(s.start, since) if since else s.start
-            end = s.end or now
-            if end > start:
-                yield s, end - start
+            focused = s.focused_within(since, now)
+            if focused > timedelta():
+                yield s, focused
 
     def summary(self, period: str = "all", now: datetime | None = None) -> dict[str, timedelta]:
         """Total focus time per activity within the period, largest first.

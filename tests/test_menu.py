@@ -29,8 +29,8 @@ class MenuTestCase(unittest.TestCase):
             except StopIteration:
                 raise EOFError from None
 
-        def fake_print(*args) -> None:
-            output.append(" ".join(str(a) for a in args))
+        def fake_print(*args, end="\n", flush=False) -> None:
+            output.append(" ".join(str(a) for a in args) + ("" if end == "\n" else end))
 
         self.assertEqual(Menu(self.tracker, fake_input, fake_print).run(), 0)
         return "\n".join(output)
@@ -65,23 +65,41 @@ class TestMainMenu(MenuTestCase):
 
 
 class TestFocusSession(MenuTestCase):
-    def test_first_session_asks_for_activity_name(self):
-        out = self.run_menu("1", "studying", "chapter 3", "", "5")
-        self.assertIn("Focusing on 'studying'", out)
-        self.assertIn("Saved", out)
+    # Scripted input isn't a terminal, so the timer reads one command per line:
+    # "p" pause/resume, "e" end early, "c" cancel, then "y"/"n" to confirm.
+
+    def test_first_session_asks_for_activity_and_duration(self):
+        out = self.run_menu("1", "studying", "", "chapter 3", "e", "y", "5")
+        self.assertIn("Starting a 25m focus session on 'studying'", out)
+        self.assertIn("25:00 remaining", out)
+        self.assertIn("Session ended early.", out)
         [session] = self.reload().sessions
         self.assertEqual((session.activity, session.note), ("studying", "chapter 3"))
+        self.assertEqual(session.target, timedelta(minutes=25))
         self.assertFalse(session.active)
+
+    def test_custom_duration_and_invalid_durations(self):
+        out = self.run_menu("1", "work", "abc", "0", "13h", "50", "", "e", "y", "5")
+        self.assertIn("'abc' isn't a valid duration", out)
+        self.assertEqual(out.count("Please choose between 1 minute and 12h 00m."), 2)
+        self.assertEqual(self.reload().sessions[0].target, timedelta(minutes=50))
+
+    def test_default_duration_is_last_one_used(self):
+        self.tracker.start("work", target=timedelta(minutes=40))
+        self.tracker.stop()
+        out = self.run_menu("1", "1", "", "", "e", "y", "5")
+        self.assertIn("press Enter for 40m", out)
+        self.assertEqual(self.reload().sessions[-1].target, timedelta(minutes=40))
 
     def test_pick_existing_activity(self):
         self.tracker.add_activity("work")
         self.tracker.add_activity("meditating")
-        self.run_menu("1", "2", "", "", "5")  # activities sort: meditating, work
+        self.run_menu("1", "2", "", "", "e", "y", "5")  # activities sort: meditating, work
         self.assertEqual(self.reload().sessions[0].activity, "work")
 
     def test_new_activity_from_picker(self):
         self.tracker.add_activity("work")
-        self.run_menu("1", "2", "reading", "", "", "5")
+        self.run_menu("1", "2", "reading", "", "", "e", "y", "5")
         self.assertEqual(self.reload().activities(), ["reading", "work"])
 
     def test_back_from_picker_starts_nothing(self):
@@ -89,18 +107,42 @@ class TestFocusSession(MenuTestCase):
         self.run_menu("1", "3", "5")
         self.assertEqual(self.reload().sessions, [])
 
-    def test_cancel_session(self):
-        out = self.run_menu("1", "work", "", "huh", "c", "n", "c", "y", "5")
-        self.assertIn("Press Enter to stop the session, or type C to cancel it.", out)
-        self.assertIn("Still focusing", out)
+    def test_pause_and_resume(self):
+        out = self.run_menu("1", "work", "", "", "p", "p", "e", "y", "5")
+        self.assertIn("PAUSED", out)
+        [session] = self.reload().sessions
+        self.assertEqual(len(session.pauses), 1)
+        self.assertIsNotNone(session.pauses[0].end)
+
+    def test_declining_end_keeps_session_running(self):
+        out = self.run_menu("1", "work", "", "", "e", "n", "huh", "c", "y", "5")
+        self.assertIn("End now and save", out)
+        self.assertIn("Use P, E or C.", out)
         self.assertIn("Session discarded", out)
         self.assertEqual(self.reload().sessions, [])
 
-    def test_leftover_running_session_can_be_stopped(self):
+    def test_leftover_running_session_can_be_ended(self):
         self.tracker.start("work", now=datetime.now() - timedelta(minutes=30))
         out = self.run_menu("1", "2", "5")
-        self.assertIn("has been running since", out)
+        self.assertIn("is running (30m focused so far)", out)
         self.assertIsNone(self.reload().active_session())
+
+    def test_leftover_paused_session_can_be_continued(self):
+        self.tracker.start("work", target=timedelta(minutes=25))
+        self.tracker.pause()
+        out = self.run_menu("1", "1", "p", "e", "y", "5")
+        self.assertIn("is paused", out)
+        [session] = self.reload().sessions
+        self.assertFalse(session.active)
+        self.assertFalse(session.paused)
+
+    def test_session_that_finished_while_away_is_saved(self):
+        self.tracker.start("work", now=datetime.now() - timedelta(hours=1),
+                           target=timedelta(minutes=10))
+        out = self.run_menu("5")
+        self.assertIn("finished while you were away", out)
+        [session] = self.reload().sessions
+        self.assertEqual(session.duration(), timedelta(minutes=10))
 
     def test_exit_warns_about_running_session(self):
         self.tracker.start("work")

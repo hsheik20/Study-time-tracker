@@ -34,8 +34,27 @@ Run `focus` with no arguments to open the menu:
 Select an option:
 ```
 
-- **Start Focus Session**: pick an activity (or create one) and start the timer.
-  Press Enter to stop and save, or type `C` to cancel. Ctrl+C also stops and saves.
+- **Start Focus Session**: pick an activity (or create one), choose a length in
+  minutes (default 25, or whatever you used last), and a live countdown starts:
+
+  ```
+  FOCUS   18:42 remaining  █████░░░░░░░░░░░░░░░  25%
+  ```
+
+  | Key | Action |
+  |---|---|
+  | `P` or Space | pause / resume (paused time isn't counted) |
+  | `E` or Enter | end early and save the time actually focused (asks y/n) |
+  | `C` | cancel and discard the session (asks y/n) |
+  | Ctrl+C | end immediately and save |
+
+  When the countdown reaches zero the session is saved automatically and the
+  terminal bell rings. Pauses are saved as they happen, so if you close the app
+  mid-session nothing is lost: choose "Start Focus Session" again to continue,
+  and a session whose time ran out while the app was closed is saved for you.
+
+  The single-key controls need a real terminal (VS Code's integrated terminal
+  works). If input is piped, type the letter and press Enter instead.
 - **View Session History**: recent sessions, all sessions, one activity's sessions,
   or delete a session.
 - **View Statistics**: totals per activity, session count, average and longest
@@ -51,7 +70,9 @@ and asks again.
 The same features are available as one-off commands, which is handy for scripts:
 
 ```bash
-focus start studying -n "CSE 373 hw"   # start a timer
+focus start studying -n "CSE 373 hw"   # start an open-ended session
+focus start studying -m 50             # 50-minute timed session
+focus pause / focus resume
 focus status                           # what's running and for how long
 focus stop                             # stop and save the session
 focus cancel                           # discard the running session
@@ -84,6 +105,7 @@ python3 -m unittest discover -s tests -v
 ## Layout
 
 - `focus_tracker/menu.py`: interactive menu
+- `focus_tracker/timer.py`: live countdown and keypress handling
 - `focus_tracker/cli.py`: argument parsing and one-off commands
 - `focus_tracker/tracker.py`: sessions, activities, summaries and statistics
 - `focus_tracker/storage.py`: JSON persistence (atomic writes)

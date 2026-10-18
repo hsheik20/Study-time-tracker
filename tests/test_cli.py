@@ -38,6 +38,16 @@ class TestCli(unittest.TestCase):
         self.assertIn("1h 30m", out)
         self.assertIn("Total", out)
 
+    def test_timed_session_with_pause(self):
+        code, out, _ = self.run_cli("start", "studying", "-m", "25")
+        self.assertIn("for 25m", out)
+        self.assertIn("25:00 remaining", self.run_cli("status")[1])
+        self.assertIn("Paused", self.run_cli("pause")[1])
+        self.assertIn("Paused on 'studying'", self.run_cli("status")[1])
+        self.assertIn("Resumed", self.run_cli("resume")[1])
+        self.assertEqual(self.run_cli("stop")[0], 0)
+        self.assertEqual(self.run_cli("resume")[0], 1)
+
     def test_errors_return_nonzero(self):
         code, _, err = self.run_cli("stop")
         self.assertEqual(code, 1)
