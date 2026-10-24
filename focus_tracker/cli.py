@@ -61,12 +61,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("delete", help="delete a session by id")
     p.add_argument("id", type=int)
 
+    p = sub.add_parser("web", help="open the Focus Tracker website in your browser")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
+
     return parser
 
 
 def main(argv: list[str] | None = None, storage: Storage | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     args = build_parser().parse_args(argv) if argv else None
+    if args and args.command == "web":
+        from focus_tracker.web.server import serve  # only needs FastAPI when used
+
+        return serve(port=args.port, open_browser=not args.no_browser)
     try:
         tracker = Tracker(storage or Storage())
         if args is None:

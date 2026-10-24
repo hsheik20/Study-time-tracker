@@ -277,6 +277,21 @@ class Tracker:
         ordered = dict(sorted(totals.items(), key=lambda kv: kv[1], reverse=True))
         return Stats(ordered, count, longest)
 
+    def daily_totals(self, days: int = 7, now: datetime | None = None) -> list[tuple[datetime, timedelta]]:
+        """Focused time on each of the last `days` days (oldest first), as
+        (midnight, total) pairs. Sessions spanning midnight are split."""
+        now = now or datetime.now()
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        result = []
+        for back in range(days - 1, -1, -1):
+            start = midnight - timedelta(days=back)
+            end = start + timedelta(days=1)
+            # Focus from `start` onwards, minus focus from `end` onwards.
+            total = sum((s.focused_within(start, now) - s.focused_within(end, now)
+                         for s in self.sessions), timedelta())
+            result.append((start, total))
+        return result
+
     def streak(self, now: datetime | None = None) -> int:
         """Consecutive days with at least one session, ending today (or yesterday)."""
         days = {s.start.date() for s in self.sessions}

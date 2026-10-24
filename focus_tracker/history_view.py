@@ -14,16 +14,25 @@ MIN_NOTE_WIDTH = 6  # below this the note column is dropped
 STATUS_WIDTH = 14
 
 
-def session_status(session: Session) -> str:
+def status_key(session: Session) -> str:
+    """One of: running, paused, completed, ended_early, untimed."""
     if session.active:
-        return "‖ Paused" if session.paused else "● Running"
+        return "paused" if session.paused else "running"
     if session.target:
         # Allow a second of rounding from timestamps saved by older versions.
         if session.duration() >= session.target - timedelta(seconds=1):
-            return "✓ Completed"
+            return "completed"
+        return "ended_early"
+    return "untimed"  # logged manually or open-ended
+
+
+def session_status(session: Session) -> str:
+    key = status_key(session)
+    if key == "ended_early":
         percent = min(99, int(session.duration() / session.target * 100))
         return f"■ Ended at {percent}%"
-    return "· Untimed"  # logged manually or open-ended
+    return {"running": "● Running", "paused": "‖ Paused", "completed": "✓ Completed",
+            "untimed": "· Untimed"}[key]
 
 
 def day_label(day: date, today: date) -> str:

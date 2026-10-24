@@ -16,3 +16,8 @@ sessions.json
 .DS_Store
 .vscode/
 .idea/
+
+# Secrets (e.g. API keys for future AI features)
+.env
+.env.*
+!.env.example

@@ -3,7 +3,8 @@
 A command-line tool for tracking how much time you spend focusing on different
 activities: studying, working, meditating, personal projects, or anything else.
 
-Pure Python standard library, no dependencies. Requires Python 3.10+.
+The terminal app is pure Python standard library with no dependencies; the
+optional website needs FastAPI. Requires Python 3.10+.
 
 ## Install
 
@@ -16,7 +17,30 @@ python3 focus_tracker/__main__.py
 
 In VS Code you can also open `focus_tracker/__main__.py` and click **Run Python File**.
 
-## Usage
+## Website
+
+Focus Tracker also has a web dashboard that reads the same data as the
+terminal app, so sessions you track in either show up in both.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[web]"            # FastAPI + Uvicorn (".[dev]" adds test deps)
+focus web                          # opens http://127.0.0.1:8000 in your browser
+```
+
+Other ways to start it: `python -m focus_tracker.web`, or open
+`focus_tracker/web/__main__.py` in VS Code and click **Run Python File**.
+Options: `--port 8080`, `--no-browser`. API docs are at `/api/docs`.
+
+Pages: **Dashboard** (today, this week, streak, a 7-day chart, top activities,
+recent sessions), **Focus Sessions** (a live view of the running session plus
+your focus habits), **History** (grouped by day, with activity filter and
+search), **Activities**, and **AI Insights** (coming soon). It's dark by
+default; the sun/moon button switches themes and remembers your choice.
+
+The site is read-only for now: start and control sessions from the terminal.
+
 
 ### Interactive menu
 
@@ -124,8 +148,11 @@ Sessions and activities are stored as JSON in `~/.focus_tracker/sessions.json`. 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -v
+pip install -e ".[dev]"
+python -m unittest discover -s tests -v
 ```
+
+The web tests are skipped automatically if FastAPI isn't installed.
 
 ## Layout
 
@@ -134,6 +161,11 @@ python3 -m unittest discover -s tests -v
 - `focus_tracker/display.py`: drawing the session screen (big digits, track, bar)
 - `focus_tracker/sound.py`: the generated completion chime
 - `focus_tracker/history_view.py`: the session history screen
+- `focus_tracker/web/`: the website
+  - `app.py`: FastAPI app; `routes/`: one API module per area (dashboard,
+    sessions, activities, stats, insights); `serializers.py`: JSON shapes
+  - `static/`: the frontend (no build step): `index.html`, `css/app.css`,
+    `js/app.js` (routing, theme), `js/views/*.js` (one file per page)
 - `focus_tracker/cli.py`: argument parsing and one-off commands
 - `focus_tracker/tracker.py`: sessions, activities, summaries and statistics
 - `focus_tracker/storage.py`: JSON persistence (atomic writes)
