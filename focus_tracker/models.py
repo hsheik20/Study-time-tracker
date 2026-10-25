@@ -21,6 +21,10 @@ class Session:
     note: str = ""
     target: timedelta | None = None  # planned length for timed sessions
     pauses: list[Pause] = field(default_factory=list)
+    # Optional details, recorded for later review and AI analysis.
+    location: str = ""
+    distractions: list[str] = field(default_factory=list)
+    reflection: str = ""  # what went well / what was hard
 
     @property
     def active(self) -> bool:
@@ -61,6 +65,9 @@ class Session:
             "note": self.note,
             "target_seconds": int(self.target.total_seconds()) if self.target else None,
             "pauses": [[_iso(p.start), _iso(p.end)] for p in self.pauses],
+            "location": self.location,
+            "distractions": list(self.distractions),
+            "reflection": self.reflection,
         }
 
     @classmethod
@@ -74,6 +81,10 @@ class Session:
             note=data.get("note", ""),
             target=timedelta(seconds=target) if target else None,
             pauses=[Pause(_parse(s), _parse(e)) for s, e in data.get("pauses", [])],
+            # Sessions saved before these fields existed load with empty values.
+            location=data.get("location") or "",
+            distractions=[str(d) for d in data.get("distractions") or []],
+            reflection=data.get("reflection") or "",
         )
 
 

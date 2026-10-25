@@ -40,6 +40,11 @@ def session_dict(session: Session, now: datetime) -> dict:
         "percent": percent,
         "paused": session.paused,
         "pause_count": len(session.pauses),
+        "paused_seconds": seconds(sum(
+            ((p.end or now) - p.start for p in session.pauses), timedelta())),
+        "location": session.location,
+        "distractions": list(session.distractions),
+        "reflection": session.reflection,
     }
 
 

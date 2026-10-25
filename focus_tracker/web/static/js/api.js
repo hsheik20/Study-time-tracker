@@ -1,26 +1,64 @@
 // Thin wrappers around the JSON API. Each view imports only what it needs.
+// Errors carry the server's message (written for users), e.g. "Activity 'work' already exists."
 
-async function get(path) {
-  const response = await fetch(`/api${path}`, { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    let detail = `${response.status} ${response.statusText}`;
-    try { detail = (await response.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
   }
-  return response.json();
 }
 
+async function request(method, path, body) {
+  const options = { method, headers: { Accept: "application/json" } };
+  if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  let response;
+  try {
+    response = await fetch(`/api${path}`, options);
+  } catch (_) {
+    throw new ApiError("Can't reach the Focus Tracker server. Is it still running?", 0);
+  }
+  if (response.status === 204) return null;
+  let data = null;
+  try { data = await response.json(); } catch (_) {}
+  if (!response.ok) {
+    let detail = data?.detail || `${response.status} ${response.statusText}`;
+    if (Array.isArray(detail)) detail = detail.map((d) => d.msg).join("; "); // validation errors
+    throw new ApiError(detail, response.status);
+  }
+  return data;
+}
+
+const enc = encodeURIComponent;
+
 export const api = {
-  dashboard: () => get("/dashboard"),
+  dashboard: () => request("GET", "/dashboard"),
   sessions: ({ activity, limit } = {}) => {
     const params = new URLSearchParams();
     if (activity) params.set("activity", activity);
     if (limit) params.set("limit", limit);
     const query = params.toString();
-    return get(`/sessions${query ? `?${query}` : ""}`);
+    return request("GET", `/sessions${query ? `?${query}` : ""}`);
   },
-  activeSession: () => get("/sessions/active"),
-  activities: () => get("/activities"),
-  stats: (period = "week") => get(`/stats?period=${encodeURIComponent(period)}`),
-  insights: () => get("/insights"),
+  session: (id) => request("GET", `/sessions/${id}`),
+  logSession: (body) => request("POST", "/sessions", body),
+  updateSession: (id, body) => request("PATCH", `/sessions/${id}`, body),
+  deleteSession: (id) => request("DELETE", `/sessions/${id}`),
+
+  activeSession: () => request("GET", "/sessions/active"),
+  startSession: (body) => request("POST", "/sessions/active", body),
+  pauseSession: () => request("POST", "/sessions/active/pause"),
+  resumeSession: () => request("POST", "/sessions/active/resume"),
+  stopSession: () => request("POST", "/sessions/active/stop"),
+  cancelSession: () => request("POST", "/sessions/active/cancel"),
+
+  activities: () => request("GET", "/activities"),
+  createActivity: (name) => request("POST", "/activities", { name }),
+  renameActivity: (name, newName) => request("PATCH", `/activities/${enc(name)}`, { name: newName }),
+  deleteActivity: (name) => request("DELETE", `/activities/${enc(name)}`),
+
+  stats: (period = "week") => request("GET", `/stats?period=${enc(period)}`),
+  insights: () => request("GET", "/insights"),
 };

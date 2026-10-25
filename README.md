@@ -33,13 +33,28 @@ Other ways to start it: `python -m focus_tracker.web`, or open
 `focus_tracker/web/__main__.py` in VS Code and click **Run Python File**.
 Options: `--port 8080`, `--no-browser`. API docs are at `/api/docs`.
 
-Pages: **Dashboard** (today, this week, streak, a 7-day chart, top activities,
-recent sessions), **Focus Sessions** (a live view of the running session plus
-your focus habits), **History** (grouped by day, with activity filter and
-search), **Activities**, and **AI Insights** (coming soon). It's dark by
-default; the sun/moon button switches themes and remembers your choice.
+Pages:
 
-The site is read-only for now: start and control sessions from the terminal.
+- **Focus Sessions**: the interactive timer. Pick or create an activity,
+  choose a duration (presets or custom), optionally add a location and note,
+  and start. The countdown ring has Pause/Resume, End early and Cancel (also
+  `Space`, `E` and `C`). Pauses don't count, the timer survives page switches
+  and refreshes, and the session saves itself at zero with an optional chime.
+  Afterwards you can record distractions and a short reflection.
+- **History**: sessions grouped by day, with filter and search. Click a session
+  for its details (location, pauses, distractions, reflection), add or edit a
+  reflection, or delete it. **Log session** adds one you forgot to time.
+- **Activities**: create, rename and delete activities.
+- **Dashboard** (today, this week, streak, 7-day chart, recent sessions) and
+  **AI Insights** (coming soon).
+
+It's dark by default; the sun/moon button switches themes and remembers your
+choice.
+
+The website and the terminal app share one data file and stay in sync: a
+session started in one shows up in the other, and either can pause or end it.
+Every change is made under a file lock from the latest saved state, so the two
+never overwrite each other.
 
 
 ### Interactive menu

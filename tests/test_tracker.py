@@ -5,7 +5,7 @@ from pathlib import Path
 
 from focus_tracker.formatting import format_clock, format_duration, parse_duration
 from focus_tracker.storage import Storage
-from focus_tracker.tracker import Tracker, TrackerError
+from focus_tracker.tracker import NotFoundError, Tracker, TrackerError
 
 
 class TrackerTestCase(unittest.TestCase):
@@ -247,6 +247,80 @@ class TestTimedSessions(TrackerTestCase):
         self.tracker.stop(now=self.at(1))
         self.tracker.add("b", timedelta(minutes=5))  # untimed, ignored
         self.assertEqual(self.tracker.last_target(), timedelta(minutes=50))
+
+
+class TestSessionDetails(TrackerTestCase):
+    def test_location_and_annotations_persist(self):
+        s = self.tracker.start("study", now=datetime(2026, 10, 15, 9), location=" Library ",
+                               target=timedelta(minutes=25))
+        self.tracker.stop(now=datetime(2026, 10, 15, 9, 20))
+        self.tracker.annotate(s.id, distractions=["Phone", " phone ", "", "Noise"],
+                              reflection="  Good start, lost focus at the end. ")
+        saved = self.reload().sessions[0]
+        self.assertEqual(saved.location, "Library")
+        self.assertEqual(saved.distractions, ["Phone", "Noise"])  # trimmed and de-duplicated
+        self.assertEqual(saved.reflection, "Good start, lost focus at the end.")
+
+    def test_annotate_leaves_unspecified_fields(self):
+        s = self.tracker.add("study", timedelta(minutes=5), note="keep me")
+        self.tracker.annotate(s.id, reflection="ok")
+        self.assertEqual(self.reload().sessions[0].note, "keep me")
+
+    def test_annotate_validation(self):
+        s = self.tracker.add("study", timedelta(minutes=5))
+        with self.assertRaises(TrackerError):
+            self.tracker.annotate(s.id, reflection="x" * 2001)
+        with self.assertRaises(TrackerError):
+            self.tracker.annotate(s.id, distractions=[str(i) for i in range(21)])
+        with self.assertRaises(NotFoundError):
+            self.tracker.annotate(999, reflection="hi")
+
+    def test_old_sessions_without_details_still_load(self):
+        self.path.write_text(
+            '{"sessions": [{"id": 1, "activity": "old", "start": "2026-10-01T10:00:00",'
+            ' "end": "2026-10-01T11:00:00", "note": ""}]}')
+        session = self.reload().sessions[0]
+        self.assertEqual((session.location, session.distractions, session.reflection), ("", [], ""))
+
+    def test_recent_locations(self):
+        for day, place in [(1, "Home"), (2, "library"), (3, "Library"), (4, ""), (5, "Café")]:
+            self.tracker.add("a", timedelta(minutes=5), datetime(2026, 10, day, 10), location=place)
+        self.assertEqual(self.tracker.recent_locations(), ["Café", "Library", "Home"])
+
+
+class TestSharedFile(TrackerTestCase):
+    """The CLI and the website each hold a Tracker on the same file."""
+
+    def test_reads_see_changes_from_another_tracker(self):
+        other = self.reload()
+        other.start("study", target=timedelta(minutes=25))
+        self.assertEqual(self.tracker.active_session().activity, "study")  # no manual reload
+        other.pause()
+        self.assertTrue(self.tracker.active_session().paused)
+
+    def test_writes_never_overwrite_each_other(self):
+        other = self.reload()
+        other.start("study")             # e.g. started on the website
+        with self.assertRaises(TrackerError):
+            self.tracker.start("work")   # the CLI now knows a session is running
+        self.tracker.add("reading", timedelta(minutes=5))
+        other.add_activity("gym")
+        final = self.reload()
+        self.assertEqual(len(final.sessions), 2)
+        self.assertEqual(final.activities(), ["gym", "reading", "study"])
+
+    def test_stop_from_other_tracker(self):
+        self.tracker.start("study")
+        self.reload().stop()
+        self.assertIsNone(self.tracker.active_session())
+
+    def test_lock_is_reentrant_and_released(self):
+        storage = self.tracker.storage
+        with storage.lock():
+            with storage.lock():
+                self.tracker.add_activity("inside")  # mutations inside a held lock don't deadlock
+        self.reload().add_activity("after")          # and the lock was released
+        self.assertIn("after", self.tracker.activities())
 
 
 class TestFormatting(unittest.TestCase):

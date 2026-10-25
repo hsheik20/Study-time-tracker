@@ -51,7 +51,8 @@ class TestPages(WebTestCase):
         for nav in ("Dashboard", "Focus Sessions", "History", "Activities", "AI Insights"):
             self.assertIn(nav, index.text)
         for path in ("/static/css/app.css", "/static/js/app.js", "/static/js/api.js",
-                     "/static/js/ui.js", "/static/js/views/dashboard.js",
+                     "/static/js/ui.js", "/static/js/store.js", "/static/js/sound.js",
+                     "/static/js/views/dashboard.js",
                      "/static/js/views/focus.js", "/static/js/views/history.js",
                      "/static/js/views/activities.js", "/static/js/views/insights.js"):
             self.assertEqual(self.client.get(path).status_code, 200, path)
@@ -129,8 +130,9 @@ class TestSessions(WebTestCase):
         self.assertEqual(data["suggested_minutes"], 25)
 
     def test_no_active_session(self):
-        self.assertEqual(self.get("/api/sessions/active"),
-                         {"session": None, "suggested_minutes": 50})
+        data = self.get("/api/sessions/active")
+        self.assertIsNone(data["session"])
+        self.assertEqual(data["suggested_minutes"], 50)
 
     def test_expired_session_is_completed_on_load(self):
         # Like the CLI, the site saves a countdown that ran out while nobody watched.
@@ -167,6 +169,156 @@ class TestActivitiesAndStats(WebTestCase):
         data = self.get("/api/insights")
         self.assertFalse(data["available"])
         self.assertTrue(data["planned"])
+
+
+class ClockedWebTestCase(WebTestCase):
+    """Lets a test move the server's clock forward."""
+
+    def setUp(self):
+        super().setUp()
+        self.now = NOW
+        self.client.app.dependency_overrides[get_now] = lambda: self.now
+
+    def advance(self, **delta):
+        self.now += timedelta(**delta)
+
+    def send(self, method: str, path: str, expected: int = 200, **kwargs):
+        response = self.client.request(method, path, **kwargs)
+        self.assertEqual(response.status_code, expected, response.text)
+        return response.json() if response.content else None
+
+
+class TestFocusTimerApi(ClockedWebTestCase):
+    def start(self, **body):
+        return self.send("POST", "/api/sessions/active", 201,
+                         json={"activity": "study", "minutes": 25, **body})
+
+    def test_start_creates_activity_and_session(self):
+        data = self.start(location="Library", note="chapter 4")
+        session = data["session"]
+        self.assertEqual((session["activity"], session["status"]), ("study", "running"))
+        self.assertEqual((session["target_seconds"], session["remaining_seconds"]), (1500, 1500))
+        self.assertEqual((session["location"], session["note"]), ("Library", "chapter 4"))
+        self.assertIn("study", Tracker(Storage(self.path)).activities())
+        self.assertEqual(data["recent_locations"], ["Library"])
+
+    def test_pause_excludes_time_and_survives_refresh(self):
+        self.start()
+        self.advance(minutes=5)
+        self.send("POST", "/api/sessions/active/pause")
+        self.advance(minutes=30)  # e.g. the browser was closed while paused
+        session = self.get("/api/sessions/active")["session"]
+        self.assertEqual((session["status"], session["remaining_seconds"]), ("paused", 20 * 60))
+        self.assertEqual(session["paused_seconds"], 30 * 60)
+        self.send("POST", "/api/sessions/active/resume")
+        self.advance(minutes=2)
+        session = self.get("/api/sessions/active")["session"]
+        self.assertEqual((session["status"], session["focused_seconds"]), ("running", 7 * 60))
+
+    def test_end_early_saves_focused_time(self):
+        self.start()
+        self.advance(minutes=12)
+        session = self.send("POST", "/api/sessions/active/stop")["session"]
+        self.assertEqual((session["status"], session["focused_seconds"]), ("ended_early", 12 * 60))
+        self.assertIsNone(self.get("/api/sessions/active")["session"])
+
+    def test_cancel_discards(self):
+        self.start()
+        self.send("POST", "/api/sessions/active/cancel")
+        self.assertEqual(self.get("/api/sessions")["total"], 0)
+
+    def test_completes_automatically_at_zero(self):
+        self.start(minutes=1)
+        session_id = self.get("/api/sessions/active")["session"]["id"]
+        self.advance(seconds=75)
+        session = self.get(f"/api/sessions/{session_id}")["session"]
+        self.assertEqual((session["status"], session["focused_seconds"]), ("completed", 60))
+        self.assertIsNone(self.get("/api/sessions/active")["session"])
+
+    def test_conflicts_and_validation(self):
+        self.send("POST", "/api/sessions/active/pause", 409)          # nothing running
+        self.start()
+        self.assertIn("Already tracking", self.send("POST", "/api/sessions/active", 409,
+                      json={"activity": "work", "minutes": 25})["detail"])
+        self.send("POST", "/api/sessions/active/resume", 409)          # not paused
+        for bad in ({"activity": "", "minutes": 25}, {"activity": "x", "minutes": 0},
+                    {"activity": "x", "minutes": 721}, {"activity": "x"}):
+            self.send("POST", "/api/sessions/active", 422, json=bad)
+
+    def test_started_in_cli_controlled_on_web(self):
+        Tracker(Storage(self.path)).start("cli work", now=self.now, target=timedelta(minutes=50))
+        self.advance(minutes=10)
+        self.send("POST", "/api/sessions/active/pause")
+        self.assertTrue(Tracker(Storage(self.path)).active_session().paused)
+
+
+class TestSessionDetailsApi(ClockedWebTestCase):
+    def test_reflection_after_session(self):
+        self.send("POST", "/api/sessions/active", 201, json={"activity": "study", "minutes": 25})
+        self.advance(minutes=20)
+        session_id = self.send("POST", "/api/sessions/active/stop")["session"]["id"]
+        updated = self.send("PATCH", f"/api/sessions/{session_id}",
+                            json={"distractions": ["Phone", "Noise"], "reflection": "Good flow."})
+        self.assertEqual(updated["session"]["distractions"], ["Phone", "Noise"])
+        saved = Tracker(Storage(self.path)).find_session(session_id)
+        self.assertEqual((saved.reflection, saved.distractions), ("Good flow.", ["Phone", "Noise"]))
+
+    def test_patch_validation_and_missing(self):
+        self.tracker.add("study", timedelta(minutes=5), NOW)
+        self.send("PATCH", "/api/sessions/1", 422, json={"reflection": "x" * 2001})
+        self.send("PATCH", "/api/sessions/1", 422, json={"distractions": ["a"] * 21})
+        self.send("PATCH", "/api/sessions/99", 404, json={"reflection": "hi"})
+
+    def test_log_past_session(self):
+        data = self.send("POST", "/api/sessions", 201, json={
+            "activity": "reading", "minutes": 45, "ended_at": "2026-10-22T14:30",
+            "location": "Café", "note": "novel"})["session"]
+        self.assertEqual((data["start"], data["end"]), ("2026-10-22T13:45:00", "2026-10-22T14:30:00"))
+        self.assertEqual((data["status"], data["location"]), ("untimed", "Café"))
+        self.assertEqual(self.get("/api/dashboard")["today"]["focused_seconds"], 45 * 60)
+
+    def test_log_rejects_future_and_bad_input(self):
+        self.send("POST", "/api/sessions", 422,
+                  json={"activity": "x", "minutes": 10, "ended_at": "2026-10-22T18:00"})
+        self.send("POST", "/api/sessions", 422, json={"activity": "x", "minutes": -5})
+
+    def test_delete_session(self):
+        self.tracker.add("study", timedelta(minutes=5), NOW)
+        self.send("DELETE", "/api/sessions/1", 204)
+        self.assertEqual(self.get("/api/sessions")["total"], 0)
+        self.send("DELETE", "/api/sessions/1", 404)
+
+    def test_cannot_delete_running_session(self):
+        self.send("POST", "/api/sessions/active", 201, json={"activity": "study", "minutes": 25})
+        self.assertIn("still running", self.send("DELETE", "/api/sessions/1", 409)["detail"])
+
+
+class TestActivityManagementApi(ClockedWebTestCase):
+    def test_create_rename_delete(self):
+        self.assertEqual(self.send("POST", "/api/activities", 201, json={"name": " Guitar "})["name"], "Guitar")
+        self.send("POST", "/api/activities", 409, json={"name": "guitar"})  # duplicate
+        self.tracker.add("Guitar", timedelta(minutes=30), NOW)
+        self.assertEqual(self.send("PATCH", "/api/activities/Guitar", json={"name": "Music"})["name"], "Music")
+        self.assertEqual(self.get("/api/sessions")["sessions"][0]["activity"], "Music")  # sessions follow
+        self.assertEqual(self.send("DELETE", "/api/activities/Music")["sessions_deleted"], 1)
+        self.assertEqual(self.get("/api/activities")["activities"], [])
+        self.assertEqual(self.get("/api/dashboard")["all_time"]["focused_seconds"], 0)
+
+    def test_errors(self):
+        self.send("PATCH", "/api/activities/nope", 404, json={"name": "x"})
+        self.send("DELETE", "/api/activities/nope", 404)
+        self.send("POST", "/api/activities", 422, json={"name": ""})
+        self.tracker.add_activity("a"); self.tracker.add_activity("b")
+        self.send("PATCH", "/api/activities/a", 409, json={"name": "B"})
+
+    def test_cannot_delete_activity_with_running_session(self):
+        self.send("POST", "/api/sessions/active", 201, json={"activity": "study", "minutes": 25})
+        self.send("DELETE", "/api/activities/study", 409)
+
+    def test_names_with_special_characters(self):
+        self.send("POST", "/api/activities", 201, json={"name": "C++ / data"})
+        self.send("PATCH", "/api/activities/C%2B%2B%20%2F%20data", json={"name": "C++"})
+        self.assertEqual([a["name"] for a in self.get("/api/activities")["activities"]], ["C++"])
 
 
 class TestSharedData(WebTestCase):

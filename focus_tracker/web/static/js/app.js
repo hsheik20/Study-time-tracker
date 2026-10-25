@@ -1,8 +1,8 @@
 // App shell: hash-based routing, theme toggle, and the "session running" pill.
 // Each page lives in views/<name>.js and exports render(container) → optional cleanup fn.
 
-import { api } from "./api.js";
-import { esc, clock, icon } from "./ui.js";
+import * as store from "./store.js";
+import { esc, clock, duration, icon, toast } from "./ui.js";
 import * as dashboard from "./views/dashboard.js";
 import * as focus from "./views/focus.js";
 import * as history from "./views/history.js";
@@ -11,7 +11,7 @@ import * as insights from "./views/insights.js";
 
 const ROUTES = {
   dashboard: { view: dashboard, title: "Dashboard", subtitle: "Your focus at a glance" },
-  focus: { view: focus, title: "Focus Sessions", subtitle: "Your current session and focus habits" },
+  focus: { view: focus, title: "Focus Sessions", subtitle: "Start, pause and finish your focus sessions" },
   history: { view: history, title: "History", subtitle: "Every session, grouped by day" },
   activities: { view: activities, title: "Activities", subtitle: "Where your focus time goes" },
   insights: { view: insights, title: "AI Insights", subtitle: "Personalised weekly insights" },
@@ -77,26 +77,33 @@ toggle.addEventListener("click", () => {
 });
 applyThemeLabel();
 
-// ---------- Running-session pill ----------
+// ---------- Running-session pill (every page) ----------
 
 const pill = document.getElementById("active-pill");
+const onFocusPage = () => (location.hash.replace(/^#\/?/, "") || "dashboard") === "focus";
 
-async function refreshPill() {
-  try {
-    const { session } = await api.activeSession();
-    if (!session) { pill.hidden = true; return; }
-    const time = session.remaining_seconds != null
-      ? `${clock(session.remaining_seconds)} left` : `${clock(session.focused_seconds)}`;
-    pill.className = `active-pill${session.paused ? " paused" : ""}`;
-    pill.innerHTML = `<span class="pulse-dot${session.paused ? " paused" : ""}"></span>
-      <span class="pill-text">${session.paused ? "Paused" : "Focusing"} · ${esc(session.activity)} · ${time}</span>`;
-    pill.hidden = false;
-  } catch (_) {
-    pill.hidden = true;
-  }
+function drawPill() {
+  const session = store.getSnapshot().session;
+  if (!session || onFocusPage()) { pill.hidden = true; return; }
+  const remaining = store.remainingSeconds(session);
+  const time = remaining != null ? `${clock(remaining)} left` : clock(store.focusedSeconds(session));
+  pill.className = `active-pill${session.paused ? " paused" : ""}`;
+  pill.innerHTML = `<span class="pulse-dot${session.paused ? " paused" : ""}"></span>
+    <span class="pill-text">${session.paused ? "Paused" : "Focusing"} · ${esc(session.activity)} · ${time}</span>`;
+  pill.hidden = false;
 }
 
-window.addEventListener("hashchange", navigate);
+store.subscribe((session, event) => {
+  drawPill();
+  // The Focus page shows its own celebration; elsewhere, a toast points to it.
+  if (event?.type === "completed" && !onFocusPage()) {
+    toast(`Session complete: ${duration(event.session.focused_seconds)} of ${event.session.activity}. Add a reflection on the Focus page.`);
+  }
+  // Pages showing totals re-render so the finished session is counted.
+  if (["completed", "gone"].includes(event?.type) && !onFocusPage()) navigate();
+});
+setInterval(drawPill, 1000);
+
+window.addEventListener("hashchange", () => { navigate(); drawPill(); });
+store.startStore();
 navigate();
-refreshPill();
-setInterval(refreshPill, 15000);

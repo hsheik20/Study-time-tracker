@@ -96,7 +96,7 @@ function recent(sessions) {
       </div>
       ${sessions.length ? `<div class="session-list">${sessions.map((s) => sessionRow(s)).join("")}</div>`
         : emptyState({ iconName: "timer", title: "No sessions yet",
-                       body: "Start your first one from the terminal with <code>focus</code>." })}
+                       body: 'Start your first one on the <a class="link-arrow" href="#/focus">Focus page</a>.' })}
     </div>`;
 }
 
@@ -112,6 +112,7 @@ export async function render(container) {
         <h2>${esc(greeting(now))}, <span class="gradient-text">let's focus.</span></h2>
         <p>${esc(dateText)}</p>
       </div>
+      ${data.active_session ? "" : `<a class="button primary big" href="#/focus">${icon("play")}Start focusing</a>`}
     </section>
 
     ${liveBanner(data.active_session)}

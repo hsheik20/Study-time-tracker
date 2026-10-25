@@ -10,6 +10,7 @@ venv/
 # Focus Tracker session data (if FOCUS_TRACKER_DATA points inside the repo)
 .focus_tracker/
 sessions.json
+sessions.json.lock
 *.tmp
 
 # OS / editor files
