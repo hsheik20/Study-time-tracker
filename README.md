@@ -1,189 +1,149 @@
 # Focus Tracker
 
-A command-line tool for tracking how much time you spend focusing on different
-activities: studying, working, meditating, personal projects, or anything else.
+Track how much time you spend focusing on studying, work, meditation or
+personal projects. Run focus sessions in your browser or terminal, review your
+history, and get weekly insights written by Claude.
 
-The terminal app is pure Python standard library with no dependencies; the
-optional website needs FastAPI. Requires Python 3.10+.
+**Contents:** [Overview](#project-overview) · [Features](#features) ·
+[Screenshots](#screenshots) · [Installation & Setup](#installation--setup) ·
+[AI Weekly Insights](#ai-weekly-insights) · [Original CLI](#original-cli) ·
+[Technologies](#technologies-used)
 
-## Install
+---
+
+## Project Overview
+
+**Artifact 2** was a Python command-line focus tracker. It ran timed sessions
+with a live countdown, kept a session history and reported statistics, using
+only the standard library.
+
+**Artifact 3** expands it into a **full-stack web application**:
+
+- **A FastAPI backend and a responsive browser interface.** The web app shares
+  one data file with the CLI, so a session started in either appears in both.
+- **Richer session tracking.** Each session can record a location, distractions
+  and a reflection.
+- **AI-generated weekly insights.** Python calculates the statistics, and
+  Claude turns them into a short, personalized report.
+
+## Features
+
+- ⏱️ **Interactive focus timer.** Preset or custom durations, a countdown ring,
+  pause/resume, end early, keyboard shortcuts and a completion chime.
+- 🗂️ **Activity and session management.** Create, rename and delete
+  activities, and log sessions you forgot to time.
+- 📜 **Session history.** Sessions grouped by day, with search, filters and a
+  details view.
+- 📊 **Productivity dashboard.** Daily and weekly totals, your streak, a 7-day
+  chart and recent sessions.
+- 📝 **Reflections, locations and distractions.** Record where you worked and
+  how each session went.
+- ✨ **AI weekly insights.** A concise, evidence-based report powered by Claude.
+- 🌗 **Dark/light mode and responsive design.** Works on desktop, tablet and
+  phone.
+
+## Screenshots
+
+> **Note:** these are placeholders. Replace each file in
+> [`docs/screenshots/`](docs/screenshots/), keeping the same name.
+
+### Dashboard
+![Dashboard: today, this week, streak, 7-day chart and recent sessions](docs/screenshots/dashboard.png)
+
+### Focus Timer
+![Focus timer: a running session with the countdown ring and controls](docs/screenshots/focus-timer.png)
+
+### AI Insights
+![AI Insights: weekly statistics and a generated Claude report](docs/screenshots/ai-insights.png)
+
+## Installation & Setup
+
+**Requirements:** Python 3.10+ and Git. An
+[Anthropic API key](https://console.anthropic.com/) is optional and only needed
+for AI insights.
+
+**1. Clone the repository**
 
 ```bash
-pip install -e .        # installs the `focus` command
-# or run without installing:
-python3 -m focus_tracker
-python3 focus_tracker/__main__.py
+git clone https://github.com/hsheik20/Study-time-tracker.git
+cd Study-time-tracker
 ```
 
-In VS Code you can also open `focus_tracker/__main__.py` and click **Run Python File**.
-
-## Website
-
-Focus Tracker also has a web dashboard that reads the same data as the
-terminal app, so sessions you track in either show up in both.
+**2. Create a virtual environment and install dependencies**
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[web]"            # FastAPI + Uvicorn (".[dev]" adds test deps)
-focus web                          # opens http://127.0.0.1:8000 in your browser
+pip install -e ".[web]"
 ```
 
-Other ways to start it: `python -m focus_tracker.web`, or open
-`focus_tracker/web/__main__.py` in VS Code and click **Run Python File**.
-Options: `--port 8080`, `--no-browser`. API docs are at `/api/docs`.
+**3. Configure your API key (optional)**
 
-Pages:
+Create a `.env` file in the project folder:
 
-- **Focus Sessions**: the interactive timer. Pick or create an activity,
-  choose a duration (presets or custom), optionally add a location and note,
-  and start. The countdown ring has Pause/Resume, End early and Cancel (also
-  `Space`, `E` and `C`). Pauses don't count, the timer survives page switches
-  and refreshes, and the session saves itself at zero with an optional chime.
-  Afterwards you can record distractions and a short reflection.
-- **History**: sessions grouped by day, with filter and search. Click a session
-  for its details (location, pauses, distractions, reflection), add or edit a
-  reflection, or delete it. **Log session** adds one you forgot to time.
-- **Activities**: create, rename and delete activities.
-- **AI Insights**: a weekly report written by Claude (see below).
-- **Dashboard**: today, this week, streak, 7-day chart and recent sessions.
-
-It's dark by default; the sun/moon button switches themes and remembers your
-choice.
-
-The website and the terminal app share one data file and stay in sync: a
-session started in one shows up in the other, and either can pause or end it.
-Every change is made under a file lock from the latest saved state, so the two
-never overwrite each other.
-
-
-### Interactive menu
-
-Run `focus` with no arguments to open the menu:
-
-```
-========== FOCUS TRACKER ==========
-
-1. Start Focus Session
-2. View Session History
-3. View Statistics
-4. Manage Activities
-5. Exit
-
-Select an option:
+```dotenv
+ANTHROPIC_API_KEY=your-api-key-here
 ```
 
-- **Start Focus Session**: pick an activity (or create one), choose a length in
-  minutes (default 25, or whatever you used last), and a live countdown starts:
+`.env` is git-ignored, and the key stays on the server: it's never sent to the
+browser. Without a key, everything except AI insights works normally.
 
-  ```
-  ╭──────────────────────────────────────────────────────────────╮
-  │ FOCUS SESSION  ·  CSE 373 homework                  ● ACTIVE │
-  ╰──────────────────────────────────────────────────────────────╯
-
-                   ██  ██ ██████    ██████ ██████
-                   ██  ██ ██  ██ ██ ██  ██ ██  ██
-                   ██████ ██  ██    ██  ██ ██  ██
-                       ██ ██  ██ ██ ██  ██ ██  ██
-                       ██ ██████    ██████ ██████
-                          remaining of 50m
-
-      ·········o=o>········································|▚▞
-      ██████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   20%
-
-  ────────────────────────────────────────────────────────────────
-             [P] Pause     [E] End early     [C] Cancel
-  ```
-
-  The car drives toward the finish line as you make progress, and stays put
-  while the session is paused. In a short terminal panel the clock switches to
-  normal-size digits, and in a very small one the screen collapses to a single
-  status line. Set `NO_COLOR=1` to turn colors off.
-
-  | Key | Action |
-  |---|---|
-  | `P` or Space | pause / resume (paused time isn't counted) |
-  | `E` or Enter | end early and save the time actually focused (asks y/n) |
-  | `C` | cancel and discard the session (asks y/n) |
-  | Ctrl+C | end immediately and save |
-
-  When the countdown reaches zero the session is saved automatically, a short
-  chime plays, and a big "WELL DONE!" message celebrates the finished session.
-  Ending early or cancelling doesn't chime. The chime uses your system's audio
-  player (afplay on macOS, winsound on Windows, paplay/pw-play/aplay on Linux)
-  and falls back to the terminal bell; set `FOCUS_TRACKER_SOUND=off` to mute it. Pauses are saved as they happen, so if you close the app
-  mid-session nothing is lost: choose "Start Focus Session" again to continue,
-  and a session whose time ran out while the app was closed is saved for you.
-
-  The single-key controls need a real terminal (VS Code's integrated terminal
-  works). If input is piped, type the letter and press Enter instead.
-- **View Session History**: recent sessions, all sessions, one activity's sessions,
-  or delete a session. Sessions are grouped by day with a daily total, and each
-  one shows its time range, focused time and status: ✓ Completed, ■ Ended at 70%
-  (ended early), ● Running, ‖ Paused, or · Untimed (logged manually or open-ended).
-- **View Statistics**: totals per activity, session count, average and longest
-  session, and your daily streak, for today, this week, this month or all time.
-- **Manage Activities**: view, add, rename or delete activities, and log a
-  session you forgot to time.
-
-Every submenu has a "Back to Main Menu" option. Invalid input shows a message
-and asks again.
-
-### Commands
-
-The same features are available as one-off commands, which is handy for scripts:
+**4. Launch the web app**
 
 ```bash
-focus start studying -n "CSE 373 hw"   # start an open-ended session
-focus start studying -m 50             # 50-minute timed session
-focus pause / focus resume
-focus status                           # what's running and for how long
-focus stop                             # stop and save the session
-focus cancel                           # discard the running session
-
-focus add work 1h30m                   # log a session you forgot to time
-focus add reading 45m --ended "2026-10-14 18:30"
-
-focus log                              # recent sessions (with ids)
-focus log -a studying -l 0             # all studying sessions
-focus summary                          # totals per activity this week
-focus summary today|week|month|all
-focus delete 3                         # remove a session by id
+focus web                          # opens http://127.0.0.1:8000
 ```
 
-Durations accept `90` (minutes), `45m`, `2h`, or `1h30m`. Weeks start on Monday.
-In summaries, a session that crosses the start of the period only counts the
-part inside the period.
+You can also run `python -m focus_tracker.web`. Use `--port 8080` to change
+the port, or `--no-browser` to skip opening a tab.
 
-## Data
+## AI Weekly Insights
 
-Sessions and activities are stored as JSON in `~/.focus_tracker/sessions.json`. Set
-`FOCUS_TRACKER_DATA=/path/to/file.json` to use a different file.
+On the **AI Insights** page, click **Generate Weekly Insights** to have Claude
+(`claude-haiku-5-5`) analyze your week:
 
-## Development
+- **What it looks at:** focus time, completion rates, time of day, activities,
+  locations, distractions, trends over recent weeks, and your notes and
+  reflections.
+- **What you get:** a weekly overview, focus patterns, distraction analysis,
+  your top strengths and areas to improve, and three recommendations for next
+  week.
+- **How it stays accurate:** Python calculates every number, and Claude only
+  interprets them. Each point is labelled **Observed** (shown directly by the
+  data) or **Interpretation** (a likely explanation). With limited data, the
+  report keeps its conclusions tentative.
+- **Privacy and cost:** only weekly totals and a trimmed sample of notes are
+  sent to the API. Reports are generated only when you ask, are rate-limited,
+  and are saved on your computer.
+
+## Original CLI
+
+The Artifact 2 command-line app is still included and needs no third-party
+packages:
+
+```bash
+python3 -m focus_tracker           # interactive menu
+```
+
+If you installed the project, `focus` opens the same menu. Commands such as
+`focus start studying -m 50`, `focus log` and `focus summary week` are also
+available; run `focus --help` to see them all. Sessions are stored in
+`~/.focus_tracker/sessions.json`, which the CLI and web app share.
+
+## Technologies Used
+
+| Area | Stack |
+|---|---|
+| **Backend** | Python 3.10+, FastAPI, Uvicorn, Pydantic |
+| **AI** | Anthropic Python SDK (Claude Haiku 5.5, structured outputs), python-dotenv |
+| **Frontend** | HTML, CSS and vanilla JavaScript (ES modules, no build step), Web Audio API |
+| **CLI** | Python standard library (argparse, ANSI terminal rendering) |
+| **Storage** | Local JSON file with atomic writes and file locking |
+| **Testing** | unittest, FastAPI TestClient, mocked Anthropic client |
+
+To run the tests:
 
 ```bash
 pip install -e ".[dev]"
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests
 ```
-
-The web tests are skipped automatically if FastAPI isn't installed.
-
-## Layout
-
-- `focus_tracker/menu.py`: interactive menu
-- `focus_tracker/timer.py`: live countdown and keypress handling
-- `focus_tracker/display.py`: drawing the session screen (big digits, track, bar)
-- `focus_tracker/sound.py`: the generated completion chime
-- `focus_tracker/history_view.py`: the session history screen
-- `focus_tracker/insights/`: weekly insights (`metrics.py` numbers, `report.py` Claude call, `service.py` limits and saved reports)
-- `focus_tracker/web/`: the website
-  - `app.py`: FastAPI app; `routes/`: one API module per area (dashboard,
-    sessions, activities, stats, insights); `serializers.py`: JSON shapes
-  - `static/`: the frontend (no build step): `index.html`, `css/app.css`,
-    `js/app.js` (routing, theme), `js/views/*.js` (one file per page)
-- `focus_tracker/cli.py`: argument parsing and one-off commands
-- `focus_tracker/tracker.py`: sessions, activities, summaries and statistics
-- `focus_tracker/storage.py`: JSON persistence (atomic writes)
-- `focus_tracker/models.py`: the `Session` data type
-- `focus_tracker/formatting.py`: duration parsing and display
