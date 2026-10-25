@@ -1,7 +1,8 @@
 import { api } from "../api.js";
+import { isSampleActivity } from "../demo.js";
 import {
   activityColor, confirmDialog, duration, emptyState, esc, formDialog, icon, parseLocal, plural,
-  relativeDay, toast,
+  relativeDay, sampleTag, toast,
 } from "../ui.js";
 
 function card(activity, total) {
@@ -15,7 +16,7 @@ function card(activity, total) {
         <div class="avatar">${esc(initial)}</div>
         <div class="activity-name">
           <h3 title="${esc(activity.name)}">${esc(activity.name)}</h3>
-          <div class="muted">Last session: ${esc(relativeDay(parseLocal(activity.last_session)))}</div>
+          <div class="muted">${sampleTag(isSampleActivity(activity.name))} Last session: ${esc(relativeDay(parseLocal(activity.last_session)))}</div>
         </div>
         <div class="card-actions">
           <button class="icon-button small" data-rename="${esc(activity.name)}" title="Rename" aria-label="Rename ${esc(activity.name)}">${icon("pencil")}</button>

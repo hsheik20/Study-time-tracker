@@ -25,6 +25,7 @@ class Session:
     location: str = ""
     distractions: list[str] = field(default_factory=list)
     reflection: str = ""  # what went well / what was hard
+    sample: bool = False  # example data preloaded in the public demo
 
     @property
     def active(self) -> bool:
@@ -68,6 +69,8 @@ class Session:
             "location": self.location,
             "distractions": list(self.distractions),
             "reflection": self.reflection,
+            # Only written when set, so local data files are unchanged.
+            **({"sample": True} if self.sample else {}),
         }
 
     @classmethod
@@ -85,6 +88,7 @@ class Session:
             location=data.get("location") or "",
             distractions=[str(d) for d in data.get("distractions") or []],
             reflection=data.get("reflection") or "",
+            sample=bool(data.get("sample", False)),
         )
 
 

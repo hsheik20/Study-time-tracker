@@ -31,20 +31,26 @@ def _week(choice: WeekChoice, now: datetime) -> Week:
     return Week.containing(now, weeks_back=0 if choice == "current" else 1)
 
 
+def _visitor(request: Request) -> str | None:
+    """Who is asking, for the public demo's per-visitor limits."""
+    return getattr(request.state, "demo_visitor", None)
+
+
 @router.get("/insights")
-def insights(week: WeekChoice = "current", tracker: Tracker = Depends(get_tracker),
+def insights(request: Request, week: WeekChoice = "current", tracker: Tracker = Depends(get_tracker),
              now: datetime = Depends(get_now), service: InsightsService = Depends(_service)) -> dict:
     """This week's numbers and the last saved report. Never calls Claude."""
-    return service.overview(tracker, _week(week, now), now)
+    return service.overview(tracker, _week(week, now), now, _visitor(request))
 
 
 @router.post("/insights")
-def generate_insights(body: GenerateRequest, tracker: Tracker = Depends(get_tracker),
+def generate_insights(request: Request, body: GenerateRequest,
+                      tracker: Tracker = Depends(get_tracker),
                       now: datetime = Depends(get_now),
                       service: InsightsService = Depends(_service)):
     """Generate a fresh report with a real Claude API call (rate limited)."""
     try:
-        return service.generate(tracker, _week(body.week, now), now)
+        return service.generate(tracker, _week(body.week, now), now, _visitor(request))
     except InsightsError as error:
         headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
         return JSONResponse({"detail": str(error), "retry_after": error.retry_after},

@@ -1,5 +1,8 @@
 // Thin wrappers around the JSON API. Each view imports only what it needs.
 // Errors carry the server's message (written for users), e.g. "Activity 'work' already exists."
+// In the public demo, calls go through demo.js, which keeps the data in this browser.
+
+import * as demo from "./demo.js";
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -9,6 +12,7 @@ export class ApiError extends Error {
 }
 
 async function request(method, path, body) {
+  if (await demo.enabled()) return demo.request(method, path, body);
   const options = { method, headers: { Accept: "application/json" } };
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";

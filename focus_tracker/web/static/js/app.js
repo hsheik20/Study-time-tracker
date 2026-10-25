@@ -1,8 +1,9 @@
 // App shell: hash-based routing, theme toggle, and the "session running" pill.
 // Each page lives in views/<name>.js and exports render(container) → optional cleanup fn.
 
+import * as demo from "./demo.js";
 import * as store from "./store.js";
-import { esc, clock, duration, icon, toast } from "./ui.js";
+import { esc, clock, confirmDialog, duration, icon, plural, toast } from "./ui.js";
 import * as dashboard from "./views/dashboard.js";
 import * as focus from "./views/focus.js";
 import * as history from "./views/history.js";
@@ -54,6 +55,7 @@ async function navigate() {
         </div>
       </div>`;
   }
+  drawDemoBanner();
   viewEl.classList.remove("view-enter");
   void viewEl.offsetWidth; // restart the entrance animation
   viewEl.classList.add("view-enter");
@@ -103,6 +105,54 @@ store.subscribe((session, event) => {
   if (["completed", "gone"].includes(event?.type) && !onFocusPage()) navigate();
 });
 setInterval(drawPill, 1000);
+
+// ---------- Public demo banner ----------
+
+const banner = document.getElementById("demo-banner");
+let demoMode = false;
+
+function drawDemoBanner() {
+  if (!demoMode) return;
+  const samples = demo.sampleSessionCount();
+  banner.innerHTML = `
+    <span class="demo-badge">Demo</span>
+    <span class="demo-text">Your data is saved only in this browser.
+      ${samples ? `<strong>${plural(samples, "sample session")}</strong> (tagged <em>Sample</em>) show how it works.` : "Everything here is yours."}</span>
+    <span class="demo-actions">
+      ${samples ? '<button class="button small" data-demo="remove">Remove sample data</button>' : ""}
+      <button class="button small" data-demo="reset">Reset demo</button>
+    </span>`;
+  banner.hidden = false;
+}
+
+banner.addEventListener("click", async (event) => {
+  const action = event.target.closest("[data-demo]")?.dataset.demo;
+  if (!action) return;
+  if (action === "remove") {
+    if (store.getSnapshot().session?.sample) return;
+    await demo.removeSampleData();
+    toast("Sample data removed. Everything left is yours.");
+  } else {
+    const ok = await confirmDialog({
+      title: "Reset the demo?",
+      body: "This deletes everything you've added in this browser and brings back the sample data.",
+      confirmLabel: "Reset demo", danger: true,
+    });
+    if (!ok) return;
+    await demo.resetDemo();
+    toast("The demo has been reset.");
+  }
+  await store.sync();
+  navigate();
+});
+
+demo.enabled().then((on) => {
+  if (!on) return;
+  demoMode = true;
+  document.getElementById("sidebar-tip-text").textContent =
+    "Demo: your sessions are stored in this browser only. Nothing is saved on the server.";
+  drawDemoBanner();
+});
 
 window.addEventListener("hashchange", () => { navigate(); drawPill(); });
 store.startStore();

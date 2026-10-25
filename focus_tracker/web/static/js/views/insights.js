@@ -162,6 +162,10 @@ export async function render(container) {
         body: "Claude will read this week's numbers, notes and reflections and write a personal report with patterns and next steps." })}</div>`;
     }
     const errorHtml = state.error ? `<div class="notice error-notice">${icon("alert")}<span>${esc(state.error)}</span></div>` : "";
+    const sample = m.data_quality.sample_sessions || 0;
+    const sampleHtml = sample ? `<div class="notice limitation">${icon("alert")}<span><strong>Sample data:</strong>
+      ${sample === m.totals.sessions ? "All" : sample} of this week's ${plural(m.totals.sessions, "session")}
+      ${sample === 1 ? "is" : "are"} example data from the demo. The report will say so; add your own sessions to make it personal.</span></div>` : "";
 
     container.innerHTML = `
       <div class="insights-head">
@@ -178,6 +182,7 @@ export async function render(container) {
         </div>
       </div>
       ${errorHtml}
+      ${sampleHtml}
       ${noData ? "" : statTiles(m)}
       <div class="section">${body}</div>
       ${noData || state.busy ? "" : patternBars(m)}

@@ -45,6 +45,7 @@ def session_dict(session: Session, now: datetime) -> dict:
         "location": session.location,
         "distractions": list(session.distractions),
         "reflection": session.reflection,
+        "sample": session.sample,
     }
 
 

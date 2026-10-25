@@ -32,18 +32,21 @@ def _env_int(name: str, default: int) -> int:
 
 class RequestLimiter:
     """Server-side caps on Claude calls: a cool-down between reports, plus hourly
-    and daily maximums. One report is generated at a time."""
+    and daily maximums. By default one report is generated at a time."""
 
     def __init__(self, cooldown: int | None = None, per_hour: int | None = None,
-                 per_day: int | None = None, clock=time.monotonic):
+                 per_day: int | None = None, clock=time.monotonic, max_concurrent: int = 1,
+                 limit_message: str = "Report limit reached."):
         self.cooldown = _env_int("FOCUS_TRACKER_INSIGHTS_COOLDOWN", 20) if cooldown is None else cooldown
         self.per_hour = _env_int("FOCUS_TRACKER_INSIGHTS_PER_HOUR", 10) if per_hour is None else per_hour
         self.per_day = _env_int("FOCUS_TRACKER_INSIGHTS_PER_DAY", 30) if per_day is None else per_day
         self.clock = clock
+        self.max_concurrent = max_concurrent
+        self.limit_message = limit_message
         self._calls: deque[float] = deque()  # start times, for the hourly/daily caps
         self._last_finished: float | None = None  # the cool-down runs from here
         self._lock = threading.Lock()
-        self._busy = False
+        self._in_flight = 0
 
     def _prune(self, now: float) -> None:
         while self._calls and now - self._calls[0] >= 86400:
@@ -65,27 +68,62 @@ class RequestLimiter:
                 "remaining_this_hour": max(0, self.per_hour - last_hour),
                 "remaining_today": max(0, self.per_day - len(self._calls)),
                 "retry_after_seconds": int(wait + 0.999) if wait > 0 else 0,
-                "busy": self._busy,
+                "busy": self._in_flight >= self.max_concurrent,
             }
 
     def acquire(self) -> None:
         """Reserve a call or raise a 429 InsightsError explaining when to retry."""
         status = self.status()
         with self._lock:
-            if self._busy:
+            if self._in_flight >= self.max_concurrent:
                 raise InsightsError("A report is already being generated.", 429, retry_after=5)
             if status["retry_after_seconds"]:
                 wait = status["retry_after_seconds"]
                 when = f"{wait} seconds" if wait < 120 else f"{round(wait / 60)} minutes"
-                raise InsightsError(f"Report limit reached. You can generate another in {when}.",
+                raise InsightsError(f"{self.limit_message} You can generate another in {when}.",
                                     429, retry_after=wait)
-            self._busy = True
+            self._in_flight += 1
             self._calls.append(self.clock())
 
     def release(self) -> None:
         with self._lock:
-            self._busy = False
+            self._in_flight = max(0, self._in_flight - 1)
             self._last_finished = self.clock()
+
+    def cancel(self) -> None:
+        """Undo an acquire() whose report never started (it doesn't count)."""
+        with self._lock:
+            self._in_flight = max(0, self._in_flight - 1)
+            if self._calls:
+                self._calls.pop()
+
+    @property
+    def idle(self) -> bool:
+        """No calls in the last day and none running: safe to forget."""
+        with self._lock:
+            self._prune(self.clock())
+            return not self._calls and not self._in_flight
+
+
+class VisitorLimiter:
+    """Per-visitor caps for the public demo, layered on top of the global limiter."""
+
+    MAX_TRACKED = 5000
+
+    def __init__(self, cooldown: int, per_hour: int, per_day: int, clock=time.monotonic):
+        self._settings = dict(cooldown=cooldown, per_hour=per_hour, per_day=per_day, clock=clock,
+                              limit_message="You've reached the demo's report limit.")
+        self._visitors: dict[str, RequestLimiter] = {}
+        self._lock = threading.Lock()
+
+    def for_visitor(self, key: str) -> RequestLimiter:
+        with self._lock:
+            limiter = self._visitors.get(key)
+            if limiter is None:
+                if len(self._visitors) >= self.MAX_TRACKED:  # forget visitors with no recent calls
+                    self._visitors = {k: v for k, v in self._visitors.items() if not v.idle}
+                limiter = self._visitors[key] = RequestLimiter(**self._settings)
+            return limiter
 
 
 class ReportStore:
@@ -119,26 +157,48 @@ class ReportStore:
 
 
 class InsightsService:
-    def __init__(self, generator: ReportGenerator, limiter: RequestLimiter | None = None):
+    def __init__(self, generator: ReportGenerator, limiter: RequestLimiter | None = None,
+                 visitor_limiter: VisitorLimiter | None = None):
         self.generator = generator
         self.limiter = limiter or RequestLimiter()
+        self.visitor_limiter = visitor_limiter  # the public demo also limits each visitor
 
     @staticmethod
     def store_for(tracker: Tracker) -> ReportStore:
+        # The demo keeps reports in the visitor's browser, passed in with each request.
+        in_memory = getattr(tracker.storage, "report_store", None)
+        if in_memory is not None:
+            return in_memory
         data = tracker.storage.path
         return ReportStore(data.with_name("insights.json"))
 
-    def overview(self, tracker: Tracker, week: Week, now: datetime) -> dict:
+    def _limiters(self, visitor: str | None) -> list[RequestLimiter]:
+        own = [self.visitor_limiter.for_visitor(visitor or "unknown")] if self.visitor_limiter else []
+        return own + [self.limiter]
+
+    def limits(self, visitor: str | None = None) -> dict:
+        """What the most restrictive limiter allows right now."""
+        statuses = [limiter.status() for limiter in self._limiters(visitor)]
+        return {
+            "remaining_this_hour": min(s["remaining_this_hour"] for s in statuses),
+            "remaining_today": min(s["remaining_today"] for s in statuses),
+            "retry_after_seconds": max(s["retry_after_seconds"] for s in statuses),
+            "busy": any(s["busy"] for s in statuses),
+        }
+
+    def overview(self, tracker: Tracker, week: Week, now: datetime,
+                 visitor: str | None = None) -> dict:
         """The numbers and any saved report for a week. Makes no API call."""
         return {
             "configured": self.generator.configured,
             "model": self.generator.model,
             "metrics": weekly_metrics(tracker, week, now),
             "report": self.store_for(tracker).get(week.key),
-            "limits": self.limiter.status(),
+            "limits": self.limits(visitor),
         }
 
-    def generate(self, tracker: Tracker, week: Week, now: datetime) -> dict:
+    def generate(self, tracker: Tracker, week: Week, now: datetime,
+                 visitor: str | None = None) -> dict:
         """Make a real Claude API call and save the resulting report."""
         if not self.generator.configured:
             raise NotConfiguredError(NOT_CONFIGURED)
@@ -147,11 +207,20 @@ class InsightsService:
             raise InsightsError("There are no finished sessions this week yet. Complete a "
                                 "session, then generate your insights.", 422)
         journal = journal_entries(tracker, week, now)
-        self.limiter.acquire()
+        acquired: list[RequestLimiter] = []
+        try:
+            for limiter in self._limiters(visitor):  # the visitor's own limit first, then the global one
+                limiter.acquire()
+                acquired.append(limiter)
+        except InsightsError:
+            for limiter in acquired:
+                limiter.cancel()
+            raise
         try:
             report, usage = self.generator.generate(metrics, journal)
         finally:
-            self.limiter.release()
+            for limiter in acquired:
+                limiter.release()
         entry = {
             "generated_at": now.isoformat(timespec="seconds"),
             "model": self.generator.model,
@@ -160,4 +229,4 @@ class InsightsService:
             **report.model_dump(),
         }
         self.store_for(tracker).put(week.key, entry)
-        return {**self.overview(tracker, week, now), "report": entry}
+        return {**self.overview(tracker, week, now, visitor), "report": entry}

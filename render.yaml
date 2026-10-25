@@ -1,0 +1,19 @@
+# Render Blueprint for the public Focus Tracker demo (free plan).
+# Each visitor's data stays in their own browser (FOCUS_TRACKER_DEMO=1), so the
+# server needs no disk or database. Set ANTHROPIC_API_KEY in the Render dashboard.
+services:
+  - type: web
+    name: focus-tracker-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install ".[web]"
+    startCommand: python -m focus_tracker.web --host 0.0.0.0 --no-browser
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: FOCUS_TRACKER_DEMO
+        value: "1"
+      - key: ANTHROPIC_API_KEY
+        sync: false # entered in the dashboard; never committed

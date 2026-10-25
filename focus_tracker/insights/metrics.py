@@ -123,13 +123,16 @@ def _headline_numbers(pairs: list[tuple[Session, timedelta]]) -> dict:
     }
 
 
-def _quality_note(sessions: int, days: int, short: int, enough: bool) -> str:
+def _quality_note(sessions: int, days: int, short: int, enough: bool, sample: int = 0) -> str:
     """A neutral description of how much data there is (no guesses about intent)."""
     note = (f"{sessions} session(s) on {days} day(s)"
             + ("." if enough else f"; patterns need at least {MIN_SESSIONS_FOR_PATTERNS} sessions "
                                   f"over {MIN_DAYS_FOR_PATTERNS} days."))
     if short:
         note += f" {short} lasted under {SHORT_SESSION_MINUTES} minutes."
+    if sample:
+        note += (f" {'All' if sample == sessions else sample} of these {'are' if sample > 1 else 'is'}"
+                 f" sample data preloaded in the demo, not the user's own sessions.")
     return note
 
 
@@ -143,7 +146,7 @@ def weekly_metrics(tracker: Tracker, week: Week, now: datetime) -> dict:
     by_location: dict[str, _Group] = defaultdict(_Group)
     by_day = [timedelta()] * 7
     distractions: Counter[str] = Counter()
-    pauses = with_distractions = with_reflection = short = 0
+    pauses = with_distractions = with_reflection = short = sample = 0
     days_active: set = set()
 
     for s, focused in pairs:
@@ -160,6 +163,8 @@ def weekly_metrics(tracker: Tracker, week: Week, now: datetime) -> dict:
             with_reflection += 1
         if focused < timedelta(minutes=SHORT_SESSION_MINUTES):
             short += 1
+        if s.sample:
+            sample += 1
 
     total_minutes = headline["focused_minutes"] or 1
 
@@ -200,8 +205,9 @@ def weekly_metrics(tracker: Tracker, week: Week, now: datetime) -> dict:
         "data_quality": {
             "enough_for_patterns": enough,
             "short_sessions": short,
+            "sample_sessions": sample,
             "short_session_minutes": SHORT_SESSION_MINUTES,
-            "note": _quality_note(headline["sessions"], len(days_active), short, enough),
+            "note": _quality_note(headline["sessions"], len(days_active), short, enough, sample),
             "has_previous_weeks": bool(previous),
         },
     }
@@ -223,6 +229,7 @@ def journal_entries(tracker: Tracker, week: Week, now: datetime) -> list[dict]:
             "distractions": s.distractions[:8] or None,
             "reflection": s.reflection[:MAX_REFLECTION_CHARS] or None,
             "short_session": focused < timedelta(minutes=SHORT_SESSION_MINUTES) or None,
+            "sample": s.sample or None,
         })
         if len(entries) == MAX_JOURNAL_ENTRIES:
             break

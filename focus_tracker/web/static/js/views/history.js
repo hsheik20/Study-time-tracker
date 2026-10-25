@@ -1,6 +1,6 @@
 import { api } from "../api.js";
 import {
-  activityColor, bindReflection, confirmDialog, dayLabel, duration, emptyState, esc, formDialog,
+  activityColor, bindReflection, confirmDialog, sampleTag, dayLabel, duration, emptyState, esc, formDialog,
   icon, localInputValue, parseLocal, plural, readReflection, reflectionFields, statusChip,
   timeRange, toast,
 } from "../ui.js";
@@ -59,6 +59,7 @@ function rowHtml(s, open) {
         <span class="focused num">${duration(s.focused_seconds)}</span>
         ${statusChip(s)}
         <span class="note">
+          ${sampleTag(s.sample)}
           ${s.location ? `<span class="row-tag">${icon("map-pin")}${esc(s.location)}</span>` : ""}
           ${hasDetails ? `<span class="row-tag accent">${icon("message")}Reflection</span>` : ""}
           <span class="note-text" title="${esc(s.note)}">${esc(s.note)}</span>

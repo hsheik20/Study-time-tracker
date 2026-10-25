@@ -14,23 +14,34 @@ from focus_tracker.insights.report import ClaudeReportGenerator, load_env
 from focus_tracker.insights.service import InsightsService
 from focus_tracker.storage import Storage
 from focus_tracker.tracker import NotFoundError, TrackerError
+from focus_tracker.web import demo
 from focus_tracker.web.routes import activities, dashboard, insights, sessions, stats
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app(storage_factory: Callable[[], Storage] = Storage,
-               insights_service: InsightsService | None = None) -> FastAPI:
+               insights_service: InsightsService | None = None,
+               demo_mode: bool | None = None) -> FastAPI:
     """Build the app. `storage_factory` picks the data file (tests pass a temp one);
     by default it's the same file the CLI uses. `insights_service` defaults to real Claude
-    calls, with the API key loaded from .env."""
+    calls, with the API key loaded from .env. `demo_mode` (default: FOCUS_TRACKER_DEMO)
+    runs the public demo, where each visitor's data stays in their browser."""
+    demo_mode = demo.enabled() if demo_mode is None else demo_mode
     app = FastAPI(title="Focus Tracker", version=__version__, docs_url="/api/docs",
                   redoc_url=None, openapi_url="/api/openapi.json")
-    app.state.storage_factory = storage_factory
+    app.state.demo = demo_mode
+    app.state.storage_factory = demo.no_server_storage if demo_mode else storage_factory
     if insights_service is None:
         load_env()
-        insights_service = InsightsService(ClaudeReportGenerator())
+        if demo_mode:
+            shared, per_visitor = demo.insights_limiters()
+            insights_service = InsightsService(ClaudeReportGenerator(), shared, per_visitor)
+        else:
+            insights_service = InsightsService(ClaudeReportGenerator())
     app.state.insights = insights_service
+    if demo_mode:
+        app.include_router(demo.router, prefix="/api")
 
     for module in (dashboard, sessions, activities, stats, insights):
         app.include_router(module.router, prefix="/api")
@@ -43,7 +54,7 @@ def create_app(storage_factory: Callable[[], Storage] = Storage,
 
     @app.get("/api/health", tags=["meta"])
     def health() -> dict:
-        return {"status": "ok", "version": __version__}
+        return {"status": "ok", "version": __version__, "demo": demo_mode}
 
     # Make browsers revalidate the page and its JS/CSS on every load (unchanged files
     # still come back as a cheap 304). Without this they may keep running an old cached
@@ -54,6 +65,9 @@ def create_app(storage_factory: Callable[[], Storage] = Storage,
         if not request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-cache"
         return response
+
+    if demo_mode:
+        app.add_middleware(demo.DemoMiddleware)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

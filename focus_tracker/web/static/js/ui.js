@@ -112,12 +112,16 @@ export function timeRange(session) {
   return `${start} – ${session.end ? timeOfDay(parseLocal(session.end)) : "now"}`;
 }
 
+/** Marks example data preloaded in the public demo. */
+export const sampleTag = (isSample) => (isSample
+  ? '<span class="row-tag sample" title="Example data that came with the demo">Sample</span>' : "");
+
 export function sessionRow(session, { compact = false } = {}) {
   const color = activityColor(session.activity);
   if (compact) {
     return `
       <div class="session-row">
-        <div class="activity"><span class="dot" style="--c:${color}"></span><span>${esc(session.activity)}</span></div>
+        <div class="activity"><span class="dot" style="--c:${color}"></span><span>${esc(session.activity)}</span>${sampleTag(session.sample)}</div>
         <div class="focused num">${duration(session.focused_seconds)}</div>
         ${statusChip(session)}
       </div>`;
@@ -125,7 +129,7 @@ export function sessionRow(session, { compact = false } = {}) {
   return `
     <div class="session-row">
       <div class="time num">${esc(timeRange(session))}</div>
-      <div class="activity"><span class="dot" style="--c:${color}"></span><span>${esc(session.activity)}</span></div>
+      <div class="activity"><span class="dot" style="--c:${color}"></span><span>${esc(session.activity)}</span>${sampleTag(session.sample)}</div>
       <div class="focused num">${duration(session.focused_seconds)}</div>
       ${statusChip(session)}
       <div class="note" title="${esc(session.note)}">${esc(session.note)}</div>
