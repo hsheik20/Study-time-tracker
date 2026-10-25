@@ -60,5 +60,6 @@ export const api = {
   deleteActivity: (name) => request("DELETE", `/activities/${enc(name)}`),
 
   stats: (period = "week") => request("GET", `/stats?period=${enc(period)}`),
-  insights: () => request("GET", "/insights"),
+  insights: (week = "current") => request("GET", `/insights?week=${enc(week)}`),
+  generateInsights: (week = "current") => request("POST", "/insights", { week }),
 };

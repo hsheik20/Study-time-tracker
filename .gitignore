@@ -11,6 +11,7 @@ venv/
 .focus_tracker/
 sessions.json
 sessions.json.lock
+insights.json
 *.tmp
 
 # OS / editor files

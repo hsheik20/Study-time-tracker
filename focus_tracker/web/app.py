@@ -10,6 +10,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from focus_tracker import __version__
+from focus_tracker.insights.report import ClaudeReportGenerator, load_env
+from focus_tracker.insights.service import InsightsService
 from focus_tracker.storage import Storage
 from focus_tracker.tracker import NotFoundError, TrackerError
 from focus_tracker.web.routes import activities, dashboard, insights, sessions, stats
@@ -17,12 +19,18 @@ from focus_tracker.web.routes import activities, dashboard, insights, sessions, 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(storage_factory: Callable[[], Storage] = Storage) -> FastAPI:
+def create_app(storage_factory: Callable[[], Storage] = Storage,
+               insights_service: InsightsService | None = None) -> FastAPI:
     """Build the app. `storage_factory` picks the data file (tests pass a temp one);
-    by default it's the same file the CLI uses."""
+    by default it's the same file the CLI uses. `insights_service` defaults to real Claude
+    calls, with the API key loaded from .env."""
     app = FastAPI(title="Focus Tracker", version=__version__, docs_url="/api/docs",
                   redoc_url=None, openapi_url="/api/openapi.json")
     app.state.storage_factory = storage_factory
+    if insights_service is None:
+        load_env()
+        insights_service = InsightsService(ClaudeReportGenerator())
+    app.state.insights = insights_service
 
     for module in (dashboard, sessions, activities, stats, insights):
         app.include_router(module.router, prefix="/api")
@@ -36,6 +44,16 @@ def create_app(storage_factory: Callable[[], Storage] = Storage) -> FastAPI:
     @app.get("/api/health", tags=["meta"])
     def health() -> dict:
         return {"status": "ok", "version": __version__}
+
+    # Make browsers revalidate the page and its JS/CSS on every load (unchanged files
+    # still come back as a cheap 304). Without this they may keep running an old cached
+    # module against a newer API after an update.
+    @app.middleware("http")
+    async def revalidate_static(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

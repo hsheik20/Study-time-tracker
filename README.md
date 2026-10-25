@@ -45,8 +45,8 @@ Pages:
   for its details (location, pauses, distractions, reflection), add or edit a
   reflection, or delete it. **Log session** adds one you forgot to time.
 - **Activities**: create, rename and delete activities.
-- **Dashboard** (today, this week, streak, 7-day chart, recent sessions) and
-  **AI Insights** (coming soon).
+- **AI Insights**: a weekly report written by Claude (see below).
+- **Dashboard**: today, this week, streak, 7-day chart and recent sessions.
 
 It's dark by default; the sun/moon button switches themes and remembers your
 choice.
@@ -176,6 +176,7 @@ The web tests are skipped automatically if FastAPI isn't installed.
 - `focus_tracker/display.py`: drawing the session screen (big digits, track, bar)
 - `focus_tracker/sound.py`: the generated completion chime
 - `focus_tracker/history_view.py`: the session history screen
+- `focus_tracker/insights/`: weekly insights (`metrics.py` numbers, `report.py` Claude call, `service.py` limits and saved reports)
 - `focus_tracker/web/`: the website
   - `app.py`: FastAPI app; `routes/`: one API module per area (dashboard,
     sessions, activities, stats, insights); `serializers.py`: JSON shapes

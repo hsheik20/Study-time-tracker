@@ -14,10 +14,36 @@ HAVE_WEB = all(importlib.util.find_spec(m) for m in ("fastapi", "httpx"))
 if HAVE_WEB:
     from fastapi.testclient import TestClient
 
+    from focus_tracker.insights.service import InsightsService, RequestLimiter
     from focus_tracker.web import create_app
     from focus_tracker.web.deps import get_now
 
 NOW = datetime(2026, 10, 22, 16, 0)  # a Thursday
+
+
+class FakeGenerator:
+    """Stands in for ClaudeReportGenerator; records what it was sent."""
+
+    model = "fake-model"
+
+    def __init__(self, configured=True, error=None):
+        self.configured = configured
+        self.error = error
+        self.calls = []
+
+    def generate(self, metrics, journal):
+        from focus_tracker.insights.report import WeeklyReport
+
+        self.calls.append((metrics, journal))
+        if self.error:
+            raise self.error
+        section = {"summary": "s", "insights": [{"text": "t", "basis": "observation", "evidence": "e"}]}
+        report = WeeklyReport(headline=f"{metrics['totals']['sessions']} sessions", overview=section,
+                              focus_patterns=section, distraction_analysis=section,
+                              strengths=section["insights"], improvements=section["insights"],
+                              recommendations=[{"title": "a", "action": "b", "why": "c"}],
+                              data_limitations="None")
+        return report, {"input_tokens": 100, "output_tokens": 50}
 
 
 @unittest.skipUnless(HAVE_WEB, "web dependencies not installed (pip install -e '.[dev]')")
@@ -26,7 +52,11 @@ class WebTestCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name) / "sessions.json"
         self.tracker = Tracker(Storage(self.path))
-        app = create_app(lambda: Storage(self.path))
+        # A fake generator: these tests never load .env or call the Claude API.
+        self.generator = FakeGenerator()
+        self.limiter = RequestLimiter(cooldown=0, per_hour=100, per_day=100)
+        app = create_app(lambda: Storage(self.path),
+                         insights_service=InsightsService(self.generator, self.limiter))
         app.dependency_overrides[get_now] = lambda: NOW
         self.client = TestClient(app)
 
@@ -56,6 +86,12 @@ class TestPages(WebTestCase):
                      "/static/js/views/focus.js", "/static/js/views/history.js",
                      "/static/js/views/activities.js", "/static/js/views/insights.js"):
             self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_page_and_modules_are_revalidated(self):
+        # A stale cached view module run against a newer API breaks the page.
+        for path in ("/", "/static/js/app.js", "/static/js/views/insights.js"):
+            self.assertEqual(self.client.get(path).headers.get("cache-control"), "no-cache", path)
+        self.assertNotIn("cache-control", self.client.get("/api/health").headers)
 
     def test_health(self):
         self.assertEqual(self.get("/api/health")["status"], "ok")
@@ -165,10 +201,11 @@ class TestActivitiesAndStats(WebTestCase):
     def test_stats_rejects_bad_period(self):
         self.assertEqual(self.client.get("/api/stats?period=decade").status_code, 422)
 
-    def test_insights_placeholder(self):
+    def test_insights_overview_makes_no_api_call(self):
         data = self.get("/api/insights")
-        self.assertFalse(data["available"])
-        self.assertTrue(data["planned"])
+        self.assertTrue(data["configured"])
+        self.assertIsNone(data["report"])
+        self.assertEqual(self.generator.calls, [])
 
 
 class ClockedWebTestCase(WebTestCase):
@@ -319,6 +356,85 @@ class TestActivityManagementApi(ClockedWebTestCase):
         self.send("POST", "/api/activities", 201, json={"name": "C++ / data"})
         self.send("PATCH", "/api/activities/C%2B%2B%20%2F%20data", json={"name": "C++"})
         self.assertEqual([a["name"] for a in self.get("/api/activities")["activities"]], ["C++"])
+
+
+class TestInsightsApi(ClockedWebTestCase):
+    def add_sessions(self):
+        self.timed("study", NOW.replace(hour=9), 50, 50, "chapter 3")
+        self.tracker.annotate(1, distractions=["Phone"], reflection="Went well.")
+        self.timed("study", NOW.replace(hour=14), 25, 10)
+
+    def test_generate_and_reload_saved_report(self):
+        self.add_sessions()
+        data = self.send("POST", "/api/insights", json={"week": "current"})
+        self.assertEqual(data["report"]["headline"], "2 sessions")
+        self.assertEqual(data["report"]["model"], "fake-model")
+        self.assertEqual(data["metrics"]["totals"]["sessions"], 2)
+        metrics, journal = self.generator.calls[0]
+        self.assertEqual(journal[-1]["reflection"], "Went well.")
+        # The saved report comes back on the next page load without another call.
+        self.assertEqual(self.get("/api/insights")["report"]["headline"], "2 sessions")
+        self.assertEqual(len(self.generator.calls), 1)
+        saved = self.path.with_name("insights.json")
+        self.assertTrue(saved.exists())
+
+    def test_regenerate_replaces_report(self):
+        self.add_sessions()
+        self.send("POST", "/api/insights", json={})
+        self.tracker.add("work", timedelta(minutes=30), NOW)
+        self.assertEqual(self.send("POST", "/api/insights", json={})["report"]["headline"], "3 sessions")
+        self.assertEqual(len(self.generator.calls), 2)
+
+    def test_previous_week(self):
+        self.timed("study", NOW - timedelta(days=7), 25, 25)
+        data = self.send("POST", "/api/insights", json={"week": "previous"})
+        self.assertEqual(data["metrics"]["week"]["start"], "2026-10-12")
+        self.assertEqual(self.get("/api/insights")["report"], None)  # this week untouched
+
+    def test_no_data_is_not_sent(self):
+        detail = self.send("POST", "/api/insights", 422, json={})["detail"]
+        self.assertIn("no finished sessions", detail)
+        self.assertEqual(self.generator.calls, [])
+
+    def test_not_configured(self):
+        self.add_sessions()
+        self.generator.configured = False
+        self.assertFalse(self.get("/api/insights")["configured"])
+        self.assertIn("ANTHROPIC_API_KEY", self.send("POST", "/api/insights", 503, json={})["detail"])
+        self.assertEqual(self.generator.calls, [])
+
+    def test_api_failure_is_reported(self):
+        from focus_tracker.insights.report import InsightsError
+
+        self.add_sessions()
+        self.generator.error = InsightsError("Claude couldn't generate the report right now.", 502)
+        self.assertIn("couldn't", self.send("POST", "/api/insights", 502, json={})["detail"])
+        self.assertIsNone(self.get("/api/insights")["report"])
+
+    def test_rate_limited(self):
+        self.add_sessions()
+        self.limiter.per_hour = 1
+        self.send("POST", "/api/insights", json={})
+        response = self.client.post("/api/insights", json={})
+        self.assertEqual(response.status_code, 429)
+        self.assertIn("Retry-After", response.headers)
+        self.assertEqual(len(self.generator.calls), 1)
+
+    def test_bad_week(self):
+        self.send("POST", "/api/insights", 422, json={"week": "someday"})
+
+    def test_no_credentials_anywhere_in_responses(self):
+        self.add_sessions()
+        import os
+        os.environ["ANTHROPIC_API_KEY"] = "sk-test-not-a-real-key"
+        try:
+            pages = [self.client.get("/api/insights").text,
+                     self.client.post("/api/insights", json={}).text,
+                     self.client.get("/").text, self.client.get("/static/js/views/insights.js").text]
+        finally:
+            del os.environ["ANTHROPIC_API_KEY"]
+        for text in pages:
+            self.assertNotIn("sk-test-not-a-real-key", text)
 
 
 class TestSharedData(WebTestCase):
