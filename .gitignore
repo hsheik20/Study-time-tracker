@@ -10,9 +10,16 @@ venv/
 # Focus Tracker session data (if FOCUS_TRACKER_DATA points inside the repo)
 .focus_tracker/
 sessions.json
+sessions.json.lock
+insights.json
 *.tmp
 
 # OS / editor files
 .DS_Store
 .vscode/
 .idea/
+
+# Secrets (e.g. API keys for future AI features)
+.env
+.env.*
+!.env.example

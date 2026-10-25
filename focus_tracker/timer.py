@@ -22,8 +22,9 @@ from focus_tracker.display import (
     screen_height,
 )
 from focus_tracker.formatting import format_clock, format_duration
+from focus_tracker.history_view import status_key
 from focus_tracker.models import Session
-from focus_tracker.tracker import Tracker
+from focus_tracker.tracker import Tracker, TrackerError
 
 # Track size for the single-line fallback display.
 COMPACT_TRACK_WIDTH = 32
@@ -118,6 +119,7 @@ def terminal_keys() -> PosixKeys | WindowsKeys:
 class TimerResult:
     outcome: str  # "completed", "ended" (stopped early) or "cancelled"
     session: Session
+    elsewhere: bool = False  # finished from another window (e.g. the website)
 
 
 class FocusTimer:
@@ -144,6 +146,7 @@ class FocusTimer:
         self.screen = LiveScreen(write, color) if live else None
         self.pending: str | None = None  # "end" or "cancel" awaiting y/n
         self.notice = ""
+        self._last_seen: Session | None = None
 
     def run(self) -> TimerResult:
         session = self.tracker.active_session()
@@ -155,11 +158,14 @@ class FocusTimer:
                 result = self._loop(session)
             except KeyboardInterrupt:
                 # Ctrl+C means "I'm done": keep the time focused so far.
-                self.tracker.stop(self.clock())
-                result = TimerResult("ended", session)
+                try:
+                    result = TimerResult("ended", self.tracker.stop(self.clock()))
+                except TrackerError:  # already finished from the website
+                    result = self._finished_elsewhere(session.id)
             if self.live:
                 self.pending, self.notice = None, ""
-                self._render(session, session.end or self.clock(), result.outcome)
+                final = result.session
+                self._render(final, final.end or self.clock(), result.outcome)
         finally:
             if self.screen:
                 self.screen.close()  # also restores the cursor after errors
@@ -168,14 +174,32 @@ class FocusTimer:
     def _loop(self, session: Session) -> TimerResult:
         while True:
             now = self.clock()
-            if self.tracker.complete_if_due(now):
-                return TimerResult("completed", session)
-            self._render(session, now)
+            completed = self.tracker.complete_if_due(now)
+            if completed:
+                return TimerResult("completed", completed)
+            # Re-read every tick: the website may pause, resume or end this session.
+            current = self.tracker.active_session()
+            if current is None or current.id != session.id:
+                return self._finished_elsewhere(session.id)
+            self._last_seen = current
+            self._render(current, now)
             key = self.keys.read_key(self.TICK)
             if key is not None:
-                result = self._handle(key.lower(), session)
+                try:
+                    result = self._handle(key.lower(), current)
+                except TrackerError:  # changed elsewhere between the read and the key
+                    continue
                 if result:
                     return result
+
+    def _finished_elsewhere(self, session_id: int) -> TimerResult:
+        try:
+            session = self.tracker.find_session(session_id)
+        except TrackerError:  # cancelled elsewhere: rebuild a stand-in for the final screen
+            return TimerResult("cancelled", self._last_seen or Session(session_id, "", self.clock()),
+                               elsewhere=True)
+        outcome = "completed" if status_key(session) == "completed" else "ended"
+        return TimerResult(outcome, session, elsewhere=True)
 
     def _handle(self, key: str, session: Session) -> TimerResult | None:
         now = self.clock()
@@ -185,10 +209,8 @@ class FocusTimer:
             if key != "y":
                 return None
             if action == "end":
-                self.tracker.stop(now)
-                return TimerResult("ended", session)
-            self.tracker.cancel()
-            return TimerResult("cancelled", session)
+                return TimerResult("ended", self.tracker.stop(now))
+            return TimerResult("cancelled", self.tracker.cancel())
 
         if key in ("p", " "):
             if session.paused:

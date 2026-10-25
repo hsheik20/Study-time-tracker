@@ -157,6 +157,45 @@ class TestCountdown(TimerTestCase):
         self.assertIn("Open-ended session", self.output)
 
 
+class ExternalChangeKeys(ScriptedKeys):
+    """Runs `actions` (e.g. a website pausing the session) at given offsets."""
+
+    def __init__(self, clock, actions):
+        super().__init__(clock, [])
+        self.actions = list(actions)
+
+    def read_key(self, timeout):
+        key = super().read_key(timeout)
+        while self.actions and self.clock.now >= START + timedelta(seconds=self.actions[0][0]):
+            self.actions.pop(0)[1]()
+        return key
+
+
+class TestChangesFromWebsite(TimerTestCase):
+    def run_with(self, actions, minutes=1):
+        self.tracker.start("study", now=START, target=timedelta(minutes=minutes))
+        other = Tracker(Storage(self.path))  # the website's view of the same file
+        keys = ExternalChangeKeys(self.clock, [(at, lambda f=f: f(other)) for at, f in actions])
+        return self.make_timer(keys).run()
+
+    def test_pause_and_resume_from_website_are_followed(self):
+        result = self.run_with([(10, lambda t: t.pause(self.clock())),
+                                (40, lambda t: t.resume(self.clock()))])
+        self.assertEqual(result.outcome, "completed")
+        self.assertEqual(result.session.end, START + timedelta(seconds=90))
+        self.assertTrue(any("PAUSED" in f[1] for f in self.frames()))
+
+    def test_ended_on_website(self):
+        result = self.run_with([(20, lambda t: t.stop(self.clock()))])
+        self.assertEqual((result.outcome, result.elsewhere), ("ended", True))
+        self.assertEqual(self.saved().duration(), timedelta(seconds=20))
+
+    def test_cancelled_on_website(self):
+        result = self.run_with([(20, lambda t: t.cancel())])
+        self.assertEqual((result.outcome, result.elsewhere), ("cancelled", True))
+        self.assertEqual(Tracker(Storage(self.path)).sessions, [])
+
+
 class TestScreenLayout(TimerTestCase):
     def first_frame(self) -> list[str]:
         self.run_timer(25, [(0, "c"), (0, "y")])

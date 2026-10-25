@@ -242,6 +242,10 @@ class Menu:
         self.report_result(result)
 
     def report_result(self, result: TimerResult) -> None:
+        if result.elsewhere:
+            self.print({"completed": "This session finished while open on the website.",
+                        "ended": "This session was ended from the website.",
+                        "cancelled": "This session was cancelled from the website."}[result.outcome])
         if result.outcome == "cancelled":
             self.print("Session discarded.")
             return
