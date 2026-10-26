@@ -4,12 +4,35 @@ Track how much time you spend focusing on studying, work, meditation or
 personal projects. Run focus sessions in your browser or terminal, review your
 history, and get weekly insights written by Claude.
 
-**Contents:** [Overview](#project-overview) · [Features](#features) ·
+### 🚀 [Try the live demo →](https://focus-tracker-demo.onrender.com)
+
+No account or installation needed: it runs in your browser.
+
+**Contents:** [Live Demo](#live-demo) · [Overview](#project-overview) · [Features](#features) ·
 [Screenshots](#screenshots) · [Installation & Setup](#installation--setup) ·
 [AI Weekly Insights](#ai-weekly-insights) · [Original CLI](#original-cli) ·
 [Technologies](#technologies-used)
 
 ---
+
+## Live Demo
+
+**[focus-tracker-demo.onrender.com](https://focus-tracker-demo.onrender.com)**
+
+- **Start exploring right away.** The demo comes with sample activities and
+  focus sessions, tagged *Sample*.
+- **Make it your own.** Create activities, run and pause focus sessions,
+  record reflections, locations and distractions, and see the dashboard and
+  history update.
+- **Real AI insights.** Generate a weekly report written by Claude from your
+  current data. Reports are rate-limited to keep costs low.
+- **Private to your browser.** Each visitor's data is stored separately in
+  their own browser, and nothing is saved on the server. No account or
+  installation is required.
+
+> **Note:** the demo is hosted on Render's free plan, so after a period of
+> inactivity the first page load can take up to a minute while the server
+> wakes up.
 
 ## Project Overview
 
